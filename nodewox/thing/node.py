@@ -1,5 +1,6 @@
 #coding: utf-8
 from param import Param
+from nodewox.msg import NxRequest, NxResponse, NxVariant
 import types
 import collections
 
@@ -86,10 +87,12 @@ class Node(object):
         return []
 
 
+    #
+    # NODE PARAMS RELATED
+    #
     def add_param(self, key, name="", datatype="", value=None, comment="", options=None, writable=False, seq=0):
         p = Param(key, name=name, datatype=datatype, value=value, options=options, writable=writable, seq=seq, comment=comment)
         self._params[key] = p
-
 
     def reset_params(self):
         "reset all params to initial value"
@@ -107,6 +110,7 @@ class Node(object):
 
     def set_param(self, key, value):
         if key in self._params and self._params[key].writable:
+            '''
             dt = self._params[key].datatype
             if dt=="int":
                 value = to_int(value)
@@ -116,11 +120,12 @@ class Node(object):
                 value = to_bool(value)
             else:
                 value = U8(value)
-
+            '''
             if self._params[key].value!=value:
                 self._params[key].value = value
-                return True
-
+            return True
+        else:
+            return False
 
     def set_params(self, vals):
         assert type(vals)==types.DictType, vals
@@ -129,7 +134,6 @@ class Node(object):
             if self.set_param(k, v):
                 cnt += 1
         return cnt
-
 
     def get_status(self):
         return dict((k,v.value) for k,v in self._params.items() if v.value!=None)
@@ -155,32 +159,31 @@ class Node(object):
         return res
 
 
-    def process(self, data):
-        print("[process %d]" % self._id, data)
+    def request(self, msg):
+        "processing incomming request"
+        assert isinstance(msg, NxRequest), msg
+        res = None
+        report_params = False
 
+        if msg.action == NxRequest.ACTION_QUERY_STATUS:
+            res = NxResponse()
+            report_params = True
 
-    def request(self, content=None, from_=-1):
-        "process request"
-        if content==None:
-            return {"status": self.get_status()}
+        elif msg.action == NxRequest.ACTION_CONFIG:
+            for k in msg.params:
+                v = msg.params[k].to_value()
+                self.set_param(k, v)
+            res = NxResponse()
+            report_params = True
 
-        reply = {}
+        if report_params and len(self._params)>0:
+            for p in self._params.values():
+                va = NxVariant.from_value(p.value)
+                f = va.WhichOneof("value")
+                setattr(res.params[p.key], f, getattr(va, f))
 
-        if "status" in content:
-            reply["status"] = self.get_status()
-
-        if type(content.get("config"))==types.DictType:
-            self.set_params(content['config'])
-            reply["status"] = self.get_status()
-
-        if len(reply)>0:
-            return reply
-
-
-    def process(self, data):
-        pass
+        return res
 
 
     def tick(self):
         pass
-

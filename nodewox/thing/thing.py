@@ -2,6 +2,8 @@
 from node import Node, U8, to_int, to_float, to_bool, to_json
 from mqttclient import MqttClientMixin
 from channel import Channel
+from nodewox.msg import NxRequest, NxResponse, NxVariant, NxPacket
+from google.protobuf.message import DecodeError
 import json
 import types
 import os
@@ -344,68 +346,70 @@ class Thing(Node, MqttClientMixin):
             self._certfile = self._keyfile = ""
 
 
+    #
+    # ACK_* topic handlers
+    #
     def ack_req(self, client, userdata, msg):
-        content = None
-        from_ = -1
         if len(msg.payload)>0:
             try:
-                content = json.loads(msg.payload)
-                assert type(content)==types.DictType
-                from_ = content.get("from", -1)
+                req = NxRequest.FromString(msg.payload)
             except:
                 # bad request body
                 return
+        else:
+            req = NxRequest(action=NxRequest.ACTION_QUERY_STATUS)
 
         _id = int(PAT_REQ.findall(msg.topic)[0])
+        res = None
         if _id==self._id:
-            reply = self.request(content, from_)
+            res = self.request(req)
         else:
             lst = [x for x in self._channels.values() if x._id==_id]
             if len(lst)>0:
                 ch = lst[0]
-                reply = ch.request(content, from_)
-            else:
-                reply = None
+                res = ch.request(req)
 
-        if reply!=None:
-            client.publish("/NX/%d/r" % _id, json.dumps(reply))
+        if res != None:
+            assert isinstance(res, NxResponse), res
+            client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
 
 
-    def ack_event(self, client, userdata, msg):
+    def ack_input(self, client, userdata, msg):
+        "incoming data for channel of flow 'I'"
         _id = int(PAT_EVENT.findall(msg.topic)[0])
-        if _id==self._id:
-            act = self
-        else:
-            lst = [x for x in self._channels.values() if x._id==_id]
-            if len(lst)>0:
-                act = lst[0]
-            else:
-                act = None
 
-        if act!=None:
-            if act._datatype=="int":
-                val = to_int(msg.payload)
-            elif act._datatype=="float":
-                val = to_float(msg.payload)
-            elif act._datatype=="bool":
-                val = to_bool(msg.payload)
-            elif act._datatype=="json":
-                if len(msg.payload)==0:
-                    val = None
-                else:
-                    val = to_json(msg.payload)
-            else:
-                val = msg.payload
+        chs = [x for x in self._channels.values() if x._id==_id]
+        if len(chs) > 0:
+            chan = chs[0]
+            assert chan._flow=="I"
 
-            if val!=None:
-                reply = act.process(val)
-                if reply!=None:
-                    client.publish("/NX/%d/r" % _id, json.dumps(reply))
+            try:
+                pkt = NxPacket.FromString(msg.payload)
+            except:
+                # bad data
+                return
 
+            data = []
+            for va in pkt.values:
+                data.append(va.to_value())
 
+            if len(data)==0:
+                data = None
+            elif len(data)==1:
+                data = data[0]
+
+            res = chan.process(data, source=pkt.src, gid=pkt.gid)
+            if res != None:
+                assert isinstance(res, NxResponse), res
+                client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
+
+    #
+    # MQTT RELATED
+    #
     def publish(self, topic, payload="", qos=0):
         if self._client:
             self._client.publish(topic, payload=payload, qos=qos)
+
 
     def subscribe(self, topic):
         if self._client:
@@ -415,6 +419,7 @@ class Thing(Node, MqttClientMixin):
                 assert type(topic) in (types.ListType, types.Tuple)
                 assert len(topic)>0
             self._client.subscribe([(x,2) for x in set(topic)])
+
 
     def unsubscribe(self, topic):
         if self._client:
@@ -427,23 +432,20 @@ class Thing(Node, MqttClientMixin):
 
 
     def _prepare_connection(self, conn):
-        ids = [self._id]
-        ids += [x._id for x in self._channels.values() if x._id>0]
+        bye = bytearray(NxResponse(acktype=NxResponse.ACK_BYE).SerializeToString())
         args = {
             "client_id": self._key,
-            "will": ("/NX/%d/r" % self._id, json.dumps({"bye":ids})),
+            "will": ("/NX/%d/r" % self._id, bye),
         }
         MqttClientMixin._prepare_connection(self, conn, **args)
 
         # topic callbacks
         conn.message_callback_add("/NX/%d/q" % self._id, self.ack_req)
-        if len(self._channels)==0 and self._flow=="I":
-            conn.message_callback_add("/NX/%d" % self._id, self.ack_event)
 
         for ch in self._channels.values():
             conn.message_callback_add("/NX/%d/q" % ch._id, self.ack_req)
             if ch._flow=="I":
-                conn.message_callback_add("/NX/%d" % ch._id, self.ack_event)
+                conn.message_callback_add("/NX/%d" % ch._id, self.ack_input)
 
         return conn
 
@@ -465,10 +467,15 @@ class Thing(Node, MqttClientMixin):
                 if ch._flow=="I":
                     subs.append("/NX/%d" % ch._id)
 
-                # say hello from channel ch
-                client.publish("/NX/%d/r" % ch._id, json.dumps({"status":ch.get_status()}))
+                # hello from channel ch
+                msg = ch.request(NxRequest(action=NxRequest.ACTION_QUERY_STATUS))
+                client.publish("/NX/%d/r" % ch._id, bytearray(msg.SerializeToString()))
 
-            client.publish("/NX/%d/r" % self._id, json.dumps({"status":self.get_status()}))
+            if len(self._params)>0:
+                # hello from this thing
+                msg = self.request(NxRequest(action=NxRequest.ACTION_QUERY_STATUS))
+                client.publish("/NX/%d/r" % self._id, bytearray(msg.SerializeToString()))
+
             client.subscribe([(x,2) for x in set(subs)])
 
 

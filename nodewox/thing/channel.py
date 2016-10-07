@@ -41,6 +41,11 @@ class Channel(Node):
         return self._parent
 
 
+    def process(self, data, source=0, gid=0):
+        "flow 'I' channel processing incoming packet"
+        print("[process %d]" % self._id, data)
+
+
     def publish(self, topic, payload="", qos=0):
         self.get_thing().publish(topic, payload=payload, qos=qos)
 
@@ -51,4 +56,3 @@ class Channel(Node):
 
     def unsubscribe(self, topic):
         self.get_thing().unsubscribe(topic)
-
