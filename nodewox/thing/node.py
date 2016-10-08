@@ -1,6 +1,6 @@
 #coding: utf-8
 from param import Param
-from nodewox.msg import NxRequest, NxResponse, NxVariant
+import nodewox.thinese as thinese
 import types
 import collections
 
@@ -161,24 +161,32 @@ class Node(object):
 
     def request(self, msg):
         "processing incomming request"
-        assert isinstance(msg, NxRequest), msg
+        assert isinstance(msg, thinese.Request), msg
         res = None
         report_params = False
 
-        if msg.action == NxRequest.ACTION_QUERY_STATUS:
-            res = NxResponse()
+        if msg.action == thinese.Request.ACTION_CHECK_ALIVE:
+            res = thinese.Response()
+
+        elif msg.action == thinese.Request.ACTION_CHECK_PARAM:
+            if len(self._params)>0:
+                res = thinese.Response()
+                report_params = True
+
+        elif msg.action == thinese.Request.ACTION_CHECK_PARAM_ALIVE:
+            res = thinese.Response()
             report_params = True
 
-        elif msg.action == NxRequest.ACTION_CONFIG:
+        elif msg.action == thinese.Request.ACTION_CONFIG:
             for k in msg.params:
                 v = msg.params[k].to_value()
                 self.set_param(k, v)
-            res = NxResponse()
+            res = thinese.Response()
             report_params = True
 
-        if report_params and len(self._params)>0:
+        if res!=None and report_params and len(self._params)>0:
             for p in self._params.values():
-                va = NxVariant.from_value(p.value)
+                va = thinese.Variant.from_value(p.value)
                 f = va.WhichOneof("value")
                 setattr(res.params[p.key], f, getattr(va, f))
 

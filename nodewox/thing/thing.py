@@ -2,8 +2,8 @@
 from node import Node, U8, to_int, to_float, to_bool, to_json
 from mqttclient import MqttClientMixin
 from channel import Channel
-from nodewox.msg import NxRequest, NxResponse, NxVariant, NxPacket
 from google.protobuf.message import DecodeError
+import nodewox.thinese as thinese
 import json
 import types
 import os
@@ -350,28 +350,41 @@ class Thing(Node, MqttClientMixin):
     # ACK_* topic handlers
     #
     def ack_req(self, client, userdata, msg):
+        "handle request from other node"
         if len(msg.payload)>0:
             try:
-                req = NxRequest.FromString(msg.payload)
+                req = thinese.Request.FromString(msg.payload)
             except:
                 # bad request body
                 return
         else:
-            req = NxRequest(action=NxRequest.ACTION_QUERY_STATUS)
+            req = thinese.Request(action=thinese.Request.ACTION_CHECK_ALIVE)
 
         _id = int(PAT_REQ.findall(msg.topic)[0])
-        res = None
-        if _id==self._id:
+
+        if _id == self._id:
             res = self.request(req)
+            if res != None:
+                assert isinstance(res, thinese.Response), res
+                client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
+
+            if len(req.children) > 0:
+                # request to children too
+                for ch in self._channels.values():
+                    if ch._id in req.children:
+                        res = ch.request(req)
+                        if res != None:
+                            assert isinstance(res, thinese.Response), res
+                            client.publish("/NX/%d/r" % ch._id, bytearray(res.SerializeToString()))
+
         else:
             lst = [x for x in self._channels.values() if x._id==_id]
             if len(lst)>0:
                 ch = lst[0]
                 res = ch.request(req)
-
-        if res != None:
-            assert isinstance(res, NxResponse), res
-            client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
+                if res != None:
+                    assert isinstance(res, thinese.Response), res
+                    client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
 
 
     def ack_input(self, client, userdata, msg):
@@ -384,7 +397,7 @@ class Thing(Node, MqttClientMixin):
             assert chan._flow=="I"
 
             try:
-                pkt = NxPacket.FromString(msg.payload)
+                pkt = thinese.Packet.FromString(msg.payload)
             except:
                 # bad data
                 return
@@ -400,7 +413,7 @@ class Thing(Node, MqttClientMixin):
 
             res = chan.process(data, source=pkt.src, gid=pkt.gid)
             if res != None:
-                assert isinstance(res, NxResponse), res
+                assert isinstance(res, thinese.Response), res
                 client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
 
     #
@@ -432,7 +445,7 @@ class Thing(Node, MqttClientMixin):
 
 
     def _prepare_connection(self, conn):
-        bye = bytearray(NxResponse(acktype=NxResponse.ACK_BYE).SerializeToString())
+        bye = bytearray(thinese.Response(acktype=thinese.Response.ACK_BYE).SerializeToString())
         args = {
             "client_id": self._key,
             "will": ("/NX/%d/r" % self._id, bye),
@@ -467,13 +480,13 @@ class Thing(Node, MqttClientMixin):
                 if ch._flow=="I":
                     subs.append("/NX/%d" % ch._id)
 
-                # hello from channel ch
-                msg = ch.request(NxRequest(action=NxRequest.ACTION_QUERY_STATUS))
+                # say hello from channel ch
+                msg = ch.request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
                 client.publish("/NX/%d/r" % ch._id, bytearray(msg.SerializeToString()))
 
             if len(self._params)>0:
-                # hello from this thing
-                msg = self.request(NxRequest(action=NxRequest.ACTION_QUERY_STATUS))
+                # say hello from this thing
+                msg = self.request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
                 client.publish("/NX/%d/r" % self._id, bytearray(msg.SerializeToString()))
 
             client.subscribe([(x,2) for x in set(subs)])
