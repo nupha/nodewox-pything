@@ -1,5 +1,5 @@
 #coding: utf-8
-from talk_pb2 import Variant, Packet, Request, Response
+from talk_pb2 import Variant, Packet, Pair, Request, Response, IntArray, NumArray, BoolArray, StrArray, VariantArray, PairArray
 import types
 
 # fix Variant
@@ -30,23 +30,42 @@ def _val_to_variant(cls, val):
 
 def _variant_to_val(v):
     assert isinstance(v, Variant), v
+    ret = None
+    f = v.WhichOneof("value")
+    if f != "":
+        ret = getattr(v, f)
+        if f == "bin_val":
+            if len(ret)==0:
+                ret = None
+            else:
+                ret = bytearray(ret)
+    return ret
 
-    if v.HasField("int_val"):
-        return v.int_val
-    elif v.HasField("real_val"):
-        return v.real_val
-    elif v.HasField("str_val"):
-        return v.str_val
-    elif v.HasField("bool_val"):
-        return v.bool_val
-    elif v.HasField("bin_val"):
-        if len(v.bin_val)==0:
-            return None
+
+# set value to Variant
+def _put_to_variant(self, val):
+    tp = type(val)
+
+    if tp==types.NoneType:
+        self.bin_val = b''
+    elif tp==types.BooleanType:
+        self.bool_val = val
+    elif tp==types.StringType:
+        self.str_val = val
+    elif tp in (types.IntType, types.LongType):
+        self.int_val = val
+    elif tp==types.FloatType:
+        self.num_val = val
+    elif isinstance(val, bytearray):
+        if len(val)==0:
+            self.bin_val = b''
         else:
-            return bytearray(v.bin_val)
+            self.bin_val = str(val)
+    else:
+        assert False, (val, tp)
 
 
 Variant.from_value = classmethod(_val_to_variant)
 Variant.to_value = _variant_to_val
-
+Variant.put_value = _put_to_variant
 

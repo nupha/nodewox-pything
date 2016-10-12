@@ -64,7 +64,7 @@ class Thing(Node, MqttClientMixin):
             assert type(self.PID)==types.IntType, self.PID
             res['product'] = self.PID
 
-        res['channels'] = dict((x.key,x.as_data()) for x in self._channels.values())
+        res['children'] = dict((x.key,x.as_data()) for x in self._channels.values())
         return res
 
 
@@ -203,8 +203,8 @@ class Thing(Node, MqttClientMixin):
             self._host = host
             self._port = port
 
-            # setup channels
-            for k, chinfo in resp["channels"].items():
+            # setup children
+            for k, chinfo in resp["children"].items():
                 print(k, chinfo['id'])
 
                 if k in self._channels:
