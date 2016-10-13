@@ -1,3 +1,3 @@
 from thing import Thing
-from channel import Channel
+from channel import SourceChannel, ActuatorChannel
 

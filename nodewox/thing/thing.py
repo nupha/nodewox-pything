@@ -1,9 +1,10 @@
 #coding: utf-8
-from node import Node, U8, to_int, to_float, to_bool, to_json
-from mqttclient import MqttClientMixin
+from node import Node, U8
+from messenger import Messenger
 from channel import Channel
 from google.protobuf.message import DecodeError
 import nodewox.thinese as thinese
+import signal
 import json
 import types
 import os
@@ -17,24 +18,28 @@ import sys, optparse
 PAT_REQ   = re.compile(r"^\/NX\/(\d+)\/q$")
 PAT_EVENT = re.compile(r"^\/NX\/(\d+)$")
 
-class Thing(Node, MqttClientMixin):
+class Thing(Node):
+    # thing prop decl.
     NAME = ""
     PID = None
     CHKEYS = "*"
 
+    # messenger class decl.
+    MESSENGER_CLASS = Messenger
+
     def __init__(self, profile, secret=None, **kwargs):
+        assert issubclass(self.MESSENGER_CLASS, Messenger), self.MESSENGER_CLASS
+
         profile = os.path.abspath(profile)
         assert os.path.isfile(profile), profile
 
-        self._channels = {}
         self._running = False
 
         self._profile = profile
         self._rest_url = ""
         self._rest_ca = ""
         self._secret = secret
-
-        MqttClientMixin.__init__(self)
+        self._messenger = None
 
         self.load_local_profile()
         assert self._key not in (None, "")
@@ -47,24 +52,38 @@ class Thing(Node, MqttClientMixin):
         return self._key!="" and self._certfile!="" and self._rest_url!=""
 
 
-    def add_channel(self, ch):
+    def get_messenger(self):
+        if self._messenger==None:
+            assert self._host!=""
+            args = {
+                    "host": self._host,
+                    "port": self._port,
+                    "unpw": (self._username, self._password),
+                    "cafile": self._cafile,
+                    "certfile": self._certfile,
+                    "keyfile": self._keyfile,
+            }
+            self._messenger = self.MESSENGER_CLASS(self, **args)
+        assert isinstance(self._messenger, Messenger), self._messenger
+        return self._messenger
+
+
+    def add_child(self, ch):
         assert isinstance(ch, Channel), ch
-        assert ch._parent==self
-        assert ch.key not in self._channels
-        self._channels[ch.key] = ch
+        return Node.add_child(self, ch)
 
 
     def as_data(self):
         res = Node.as_data(self)
         if self.PID==None:
             # user defined
-            assert len(self._channels)>0
+            assert len(self.children)>0
         else:
             # instantiate from product
             assert type(self.PID)==types.IntType, self.PID
             res['product'] = self.PID
 
-        res['children'] = dict((x.key,x.as_data()) for x in self._channels.values())
+        res['children'] = dict((x.key,x.as_data()) for x in self.children.values())
         return res
 
 
@@ -207,8 +226,8 @@ class Thing(Node, MqttClientMixin):
             for k, chinfo in resp["children"].items():
                 print(k, chinfo['id'])
 
-                if k in self._channels:
-                    ch = self._channels[k]
+                if k in self.children:
+                    ch = self.children[k]
                     assert ch._flow==chinfo['flow']
 
                     ch._id = chinfo['id']
@@ -346,162 +365,72 @@ class Thing(Node, MqttClientMixin):
             self._certfile = self._keyfile = ""
 
 
-    #
-    # ACK_* topic handlers
-    #
-    def ack_req(self, client, userdata, msg):
-        "handle request from other node"
-        if len(msg.payload)>0:
-            try:
-                req = thinese.Request.FromString(msg.payload)
-            except:
-                # bad request body
-                return
-        else:
-            req = thinese.Request(action=thinese.Request.ACTION_CHECK_ALIVE)
+    def on_connected(self, userdata):
+        # listen on topics
+        res = {}
+        mess = self.get_messenger()
 
-        _id = int(PAT_REQ.findall(msg.topic)[0])
-
-        if _id == self._id:
-            res = self.request(req)
-            if res != None:
-                assert isinstance(res, thinese.Response), res
-                client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
-
-            if len(req.children) > 0:
-                # request to children too
-                for ch in self._channels.values():
-                    if ch._id in req.children:
-                        res = ch.request(req)
-                        if res != None:
-                            assert isinstance(res, thinese.Response), res
-                            client.publish("/NX/%d/r" % ch._id, bytearray(res.SerializeToString()))
-
-        else:
-            lst = [x for x in self._channels.values() if x._id==_id]
-            if len(lst)>0:
-                ch = lst[0]
-                res = ch.request(req)
-                if res != None:
-                    assert isinstance(res, thinese.Response), res
-                    client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
-
-
-    def ack_input(self, client, userdata, msg):
-        "incoming data for channel of flow 'I'"
-        _id = int(PAT_EVENT.findall(msg.topic)[0])
-
-        chs = [x for x in self._channels.values() if x._id==_id]
-        if len(chs) > 0:
-            chan = chs[0]
-            assert chan._flow=="I"
-
-            try:
-                pkt = thinese.Packet.FromString(msg.payload)
-            except:
-                # bad data
-                return
-
-            data = []
-            for va in pkt.values:
-                data.append(va.to_value())
-
-            if len(data)==0:
-                data = None
-            elif len(data)==1:
-                data = data[0]
-
-            res = chan.process(data, source=pkt.src, gid=pkt.gid)
-            if res != None:
-                assert isinstance(res, thinese.Response), res
-                client.publish("/NX/%d/r" % _id, bytearray(res.SerializeToString()))
-
-    #
-    # MQTT RELATED
-    #
-    def publish(self, topic, payload="", qos=0):
-        if self._client:
-            self._client.publish(topic, payload=payload, qos=qos)
-
-
-    def subscribe(self, topic):
-        if self._client:
-            if type(topic)==types.StringType:
-                topic = [topic]
-            else:
-                assert type(topic) in (types.ListType, types.Tuple)
-                assert len(topic)>0
-            self._client.subscribe([(x,2) for x in set(topic)])
-
-
-    def unsubscribe(self, topic):
-        if self._client:
-            if type(topic)==types.StringType:
-                topic = [topic]
-            else:
-                assert type(topic) in (types.ListType, types.Tuple)
-                assert len(topic)>0
-            self._client.unsubscribe([(x,2) for x in set(topic)])
-
-
-    def _prepare_connection(self, conn):
-        bye = bytearray(thinese.Response(acktype=thinese.Response.ACK_BYE).SerializeToString())
-        args = {
-            "client_id": self._key,
-            "will": ("/NX/%d/r" % self._id, bye),
-        }
-        MqttClientMixin._prepare_connection(self, conn, **args)
-
-        # topic callbacks
-        conn.message_callback_add("/NX/%d/q" % self._id, self.ack_req)
-
-        for ch in self._channels.values():
-            conn.message_callback_add("/NX/%d/q" % ch._id, self.ack_req)
+        subs = ["/NX/%d/q" % self._id]
+        for ch in self.children.values():
+            assert type(ch._id)==types.IntType and ch._id>0, (ch.key, ch._id)
+            subs.append("/NX/%d/q" % ch._id)
             if ch._flow=="I":
-                conn.message_callback_add("/NX/%d" % ch._id, self.ack_input)
+                subs.append("/NX/%d" % ch._id)
 
-        return conn
+            # say hello from channel ch
+            res2 = ch.handle_request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
+            if res2!=None:
+                res.update(res2)
+
+        if len(self._params)>0:
+            # say hello from this thing
+            res2 = self.handle_request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
+            if res2!=None:
+                res.update(res2)
+
+        # sub & pub
+        mess.subscribe(subs)
+        for topic, msg in res.items():
+            mess.publish(topic, bytearray(msg.SerializeToString()))
 
 
-    def connect(self):
-        assert self.is_registered
-        assert self._id>0
-        return MqttClientMixin.connect(self)
+    def on_connect_fail(self, code, userdata):
+        pass
 
+    def on_disconnected(self, code, userdata):
+        pass
 
-    def on_connect(self, client, userdata, flags, rc):
-        MqttClientMixin.on_connect(self, client, userdata, flags, rc)
-        if rc==0:
-            # listen on topics
-            subs = ["/NX/%d/q" % self._id]
-            for ch in self._channels.values():
-                assert type(ch._id)==types.IntType and ch._id>0, (ch.key, ch._id)
-                subs.append("/NX/%d/q" % ch._id)
-                if ch._flow=="I":
-                    subs.append("/NX/%d" % ch._id)
+    def on_message(self, msg, userdata):
+        pass
 
-                # say hello from channel ch
-                msg = ch.request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
-                client.publish("/NX/%d/r" % ch._id, bytearray(msg.SerializeToString()))
-
-            if len(self._params)>0:
-                # say hello from this thing
-                msg = self.request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
-                client.publish("/NX/%d/r" % self._id, bytearray(msg.SerializeToString()))
-
-            client.subscribe([(x,2) for x in set(subs)])
+    def on_sig(self, *args):
+        print("SIG", args[0])
+        self._running = False
 
 
     def tick(self):
         # tick each channel
-        for ch in self._channels.values():
+        for ch in self.children.values():
             ch.tick()
 
 
     def start(self):
         assert self.is_registered
         assert not self._running
-        MqttClientMixin.start(self)
+
+        signal.signal(signal.SIGINT, self.on_sig)
+        signal.signal(signal.SIGTERM, self.on_sig)
+
+        # main loop
+        mess = self.get_messenger()
+        self._running = True
+
+        while self._running:
+            # drive thing work
+            self.tick()
+
+            # drive messenger work
+            mess.loop()
 
 
     @classmethod

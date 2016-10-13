@@ -15,60 +15,29 @@ def U8(data):
     else:
         return data
 
-def to_int(val, default=None):
-    if val==None:
-        return default
-    try:
-        return int(val)
-    except:
-        return default
-
-def to_float(val, default=None):
-    if val==None:
-        return default
-    try:
-        return float(val)
-    except:
-        return default
-
-def to_bool(val, default=None):
-    if type(val)==types.BooleanType:
-        return val
-    elif val==None:
-        return default
-    elif type(val) in (types.IntType, types.FloatType):
-        return val not in (0, 0.0)
-    elif val.lower() in ("true", "t", "yes", "y", "1"):
-        return True
-    elif val.lower() in ("false", "f", "no", "n", "0"):
-        return False
-    else:
-        return default
-
-def to_json(val, default=None):
-    if val==None:
-        return default
-    try:
-        return U8(json.loads(val))
-    except:
-        return default
-
 
 class Node(object):
     "node base class"
+    # default node name
+    NAME = ""
 
-    def __init__(self, key, name="", comment="", **kwargs):
+    def __init__(self, key, name="", parent=None, comment="", **kwargs):
         if key!=None:
             assert key!="" and "/" not in key, key
 
         if name=="":
-            name = key
+            name = self.NAME
+
+        if parent!=None:
+            assert isinstance(parent, Node), parent
 
         # meta
         self._key = key
         self._name = name
+        self._parent = parent
         self._comment = comment
         self._params = {}
+        self._children = {}
         self._id = None
 
         self.setup(**kwargs)
@@ -83,6 +52,27 @@ class Node(object):
         return self._key
 
 
+    @property
+    def parent(self):
+        return self._parent
+
+
+    def get_id(self):
+        return self._id
+
+
+    def add_child(self, node):
+        assert isinstance(node, Node), node
+        assert node._parent==self
+        assert node.key not in self._children, node.key
+        self._children[node.key] = node
+        return node
+
+    @property
+    def children(self):
+        return self._children
+
+
     def get_attrs(self):
         return []
 
@@ -90,44 +80,26 @@ class Node(object):
     #
     # NODE PARAMS RELATED
     #
-    def add_param(self, key, name="", datatype="", value=None, comment="", options=None, writable=False, seq=0):
-        p = Param(key, name=name, datatype=datatype, value=value, options=options, writable=writable, seq=seq, comment=comment)
-        self._params[key] = p
-
-    def reset_params(self):
-        "reset all params to initial value"
-        for p in self._params.values():
-            p.value = p.default
-
-    def get_param(self, key, default=None):
-        if key not in self._params:
-            return default
-        else:
-            return self._params[key].value
-
     def has_param(self, key):
         return self._params.has_key(key)
 
+    def add_param(self, key, value, name="", comment="", options=None, writable=False, seq=-1):
+        "defina a parameter with type of value"
+        assert not self.has_param(key), key
+        p = Param(key, value, name=name, options=options, writable=writable, seq=seq, comment=comment)
+        if seq<0: p.seq = len(self._params)
+        self._params[key] = p
+        return p
+
     def set_param(self, key, value):
-        if key in self._params and self._params[key].writable:
-            '''
-            dt = self._params[key].datatype
-            if dt=="int":
-                value = to_int(value)
-            elif dt=="float":
-                value = to_float(value)
-            elif dt=="bool" and type(value)!=types.BooleanType:
-                value = to_bool(value)
-            else:
-                value = U8(value)
-            '''
-            if self._params[key].value!=value:
-                self._params[key].value = value
-            return True
+        "set new value to a param"
+        if key in self._params:
+            return self._params[key].set_value(value)
         else:
             return False
 
     def set_params(self, vals):
+        "set values of many params"
         assert type(vals)==types.DictType, vals
         cnt = 0
         for k, v in vals.items():
@@ -135,8 +107,16 @@ class Node(object):
                 cnt += 1
         return cnt
 
-    def get_status(self):
-        return dict((k,v.value) for k,v in self._params.items() if v.value!=None)
+    def get_param(self, key, default=None):
+        if key not in self._params:
+            return default
+        else:
+            return self._params[key].value
+
+    def reset_params(self):
+        "reset all params to itsinitial value"
+        for p in self._params.values():
+            p.reset()
 
 
     def as_data(self):
@@ -159,38 +139,42 @@ class Node(object):
         return res
 
 
-    def request(self, msg):
-        "processing incomming request"
-        assert isinstance(msg, thinese.Request), msg
+    def handle_request(self, req):
+        "processe an incomming request"
+        assert isinstance(req, thinese.Request), req
+        assert self._id > 0
+
         res = None
         report_params = False
 
-        if msg.action == thinese.Request.ACTION_CHECK_ALIVE:
+        if req.action == thinese.Request.ACTION_CHECK_ALIVE:
             res = thinese.Response()
 
-        elif msg.action == thinese.Request.ACTION_CHECK_PARAM:
+        elif req.action == thinese.Request.ACTION_CHECK_PARAM:
             if len(self._params)>0:
                 res = thinese.Response()
                 report_params = True
 
-        elif msg.action == thinese.Request.ACTION_CHECK_PARAM_ALIVE:
+        elif req.action == thinese.Request.ACTION_CHECK_PARAM_ALIVE:
             res = thinese.Response()
             report_params = True
 
-        elif msg.action == thinese.Request.ACTION_CONFIG:
-            for k in msg.params:
-                v = msg.params[k].to_value()
+        elif req.action == thinese.Request.ACTION_SET_PARAM:
+            for k in req.params:
+                v = req.params[k].to_value()
                 self.set_param(k, v)
             res = thinese.Response()
             report_params = True
 
         if res!=None and report_params and len(self._params)>0:
+            # write `response.params' field
             for p in self._params.values():
                 va = thinese.Variant.from_value(p.value)
                 f = va.WhichOneof("value")
                 setattr(res.params[p.key], f, getattr(va, f))
 
-        return res
+        if res!=None:
+            return {"/NX/%d/r" % self._id: res}
 
 
     def tick(self):
