@@ -1,6 +1,5 @@
 #coding: utf-8
 from param import Param
-import nodewox.thinese as thinese
 import types
 import collections
 
@@ -18,6 +17,7 @@ def U8(data):
 
 class Node(object):
     "node base class"
+
     # default node name
     NAME = ""
 
@@ -83,11 +83,11 @@ class Node(object):
     def has_param(self, key):
         return self._params.has_key(key)
 
-    def add_param(self, key, value, name="", comment="", options=None, writable=False, seq=-1):
+    def add_param(self, key, value, name="", comment="", options=[], flag="dynamic", seq=-1):
         "defina a parameter with type of value"
         assert not self.has_param(key), key
-        p = Param(key, value, name=name, options=options, writable=writable, seq=seq, comment=comment)
-        if seq<0: p.seq = len(self._params)
+        p = Param(key, value, name=name, options=options, flag=flag, comment=comment, seq=seq)
+        if seq<0: p.seq = len(self._params) + 1
         self._params[key] = p
         return p
 
@@ -139,43 +139,41 @@ class Node(object):
         return res
 
 
-    def handle_request(self, req):
+    def handle_request(self, action=0, params={}, children=[]):
         "processe an incomming request"
-        assert isinstance(req, thinese.Request), req
         assert self._id > 0
 
-        res = None
-        report_params = False
+        report_params = (action==1)
 
-        if req.action == thinese.Request.ACTION_CHECK_ALIVE:
-            res = thinese.Response()
+        # set params
+        if len(params)>0:
+            for k,v in params.items():
+                if self.set_param(k, v):
+                    report_params = True
 
-        elif req.action == thinese.Request.ACTION_CHECK_PARAM:
-            if len(self._params)>0:
-                res = thinese.Response()
-                report_params = True
-
-        elif req.action == thinese.Request.ACTION_CHECK_PARAM_ALIVE:
-            res = thinese.Response()
-            report_params = True
-
-        elif req.action == thinese.Request.ACTION_SET_PARAM:
-            for k in req.params:
-                v = req.params[k].to_value()
-                self.set_param(k, v)
-            res = thinese.Response()
-            report_params = True
-
-        if res!=None and report_params and len(self._params)>0:
-            # write `response.params' field
+        # resport param status
+        res = {}
+        if report_params and len(self._params)>0:
+            params = {}
             for p in self._params.values():
-                va = thinese.Variant.from_value(p.value)
-                f = va.WhichOneof("value")
-                setattr(res.params[p.key], f, getattr(va, f))
+                if p.flag != "STATIC":
+                    params[p.key] = p.value
+            if len(params)>0:
+                res['params'] = params
 
-        if res!=None:
-            return {"/NX/%d/r" % self._id: res}
+        pubs = {"/NX/%d/r" % self.get_id(): res}
+
+        if len(children)>0:
+            # request into children
+            for c in self.children:
+                if c.get_id() in children:
+                    r = c.handle_request(action=action)
+                    if type(r)==types.DictType:
+                        pubs.update(r)
+
+        return pubs
 
 
-    def tick(self):
+    def loop(self):
         pass
+    

@@ -1,17 +1,14 @@
 #coding: utf-8
 import paho.mqtt.client as mqtt
-import nodewox.thinese as thinese
 import time
-import signal
-import types
 import traceback
 import re
 
-PAT_REQ   = re.compile(r"^\/NX\/(\d+)\/q$")
-PAT_RES    = re.compile(r"^\/NX\/(\d+)\/r$")
-PAT_PACKET  = re.compile(r"^\/NX\/(\d+)$")
+PAT_REQ    = re.compile(r"^\/NX\/(\d+)\/q$")
+PAT_PACKET = re.compile(r"^\/NX\/(\d+)$")
 
 class Messenger(object):
+
     def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile=""):
         from node import Node
         assert isinstance(master_node, Node), master_node
@@ -55,59 +52,48 @@ class Messenger(object):
 
 
     def ack_msg_request(self, client, userdata, msg):
-        try:
-            req = thinese.Request.FromString(msg.payload)
-        except:
-            # bad request body
-            return
-
         _id = int(PAT_REQ.findall(msg.topic)[0])
-        res = {}
-
         if _id == self._node.get_id():
-            res2 = self._node.handle_request(req)
-            if res2 != None:
-                res.update(res2)
-
-            if len(req.children) > 0:
-                # request to children too
-                for ch in self._node.children.values():
-                    if ch._id in req.children:
-                        res2 = ch.handle_request(req)
-                        if res2 != None:
-                            res.update(res2)
-
+            target = self
         else:
-            lst = [x for x in self._node.children.values() if x.get_id()==_id]
-            if len(lst)>0:
-                res2 = lst[0].handle_request(req)
-                if res2 != None:
-                    res.update(res2)
+            target = None
+            for ch in self.children:
+                if ch.get_id()==_id:
+                    target = ch
+                    break
+
+        if target != None:
+            req = {}
+            if len(msg.payload)>0:
+                try:
+                    req = json.loads(msg.payload)
+                except:
+                    print("ERROR: invalid request message")
+                    return
+
+            args = {
+                    "action": req.get("action", 0),
+                    "params": req.get("params") or {},
+                    "children": req.get("children") or [],
+            }
+            res = target.handle_request(**args)
 
         for topic, msg in res.items():
-            assert isinstance(msg, thinese.Response), msg
-            client.publish(topic, bytearray(msg.SerializeToString()))
+            assert isinstance(msg, dict), msg
+            if len(msg)==0:
+                payload = ""
+            else:
+                payload = bytearray(json.dumps(msg))
+            client.publish(topic, payload)
 
 
     def ack_msg_packet(self, client, userdata, msg):
-        _id = int(PAT_EVENT.findall(msg.topic)[0])
+        _id = int(PAT_PACKET.findall(msg.topic)[0])
         chs = [x for x in self._node.children.values() if x.get_id()==_id]
         if len(chs) > 0:
             chan = chs[0]
-
             if hasattr(chan, handle_packet):
-                try:
-                    packet = thinese.Packet.FromString(msg.payload)
-                except:
-                    # bad data
-                    return
-
-                f = packet.WhichOneof("data")
-                if hasattr(packet, f):
-                    data = getattr(packet, f).value
-                else:
-                    data = None
-                chan.handle_packet(packet.src, packet.gid, data)
+                chan.handle_packet(bytearray(msg.payload))
 
 
     def _on_connect(self, client, userdata, flags, rc):
@@ -144,20 +130,20 @@ class Messenger(object):
 
     def subscribe(self, topic):
         if self._client:
-            if type(topic)==types.StringType:
+            if isinstance(topic, basestring):
                 topic = [topic]
             else:
-                assert type(topic) in (types.ListType, types.TupleType)
+                assert isinstance(topic, (list, tuple)), topic
                 assert len(topic)>0
             self._client.subscribe([(x,2) for x in set(topic)])
 
 
     def unsubscribe(self, topic):
         if self._client:
-            if type(topic)==types.StringType:
+            if isinstance(topic, basestring):
                 topic = [topic]
             else:
-                assert type(topic) in (types.ListType, types.Tuple)
+                assert isinstance(topic, (list, tuple)), topic
                 assert len(topic)>0
             self._client.unsubscribe([(x,2) for x in set(topic)])
 
@@ -167,8 +153,7 @@ class Messenger(object):
 
 
     def get_will(self):
-        bye = bytearray(thinese.Response(acktype=thinese.Response.ACK_BYE).SerializeToString())
-        return ("/NX/%d/r" % self._node.get_id(), bye)
+        return ("/NX/%d/r" % self._node.get_id(), '{"ack":"bye"}')
 
 
     def _prepare_connection(self, conn):
@@ -191,10 +176,10 @@ class Messenger(object):
 
         will = self.get_will()
         if will != None:
-            if type(will)==types.StringType:
+            if isinstance(will, basestring):
                 will = [will]
+            assert isinstance(will, (list, tuple)), will
 
-            assert type(will) in (types.ListType, types.TupleType), will
             wt = will[0]
             wp = None
             if len(will)>1:

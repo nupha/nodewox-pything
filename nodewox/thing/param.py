@@ -3,45 +3,51 @@ import json
 
 class Param(object):
 
-    def __init__(self, key, value, name="", options=[], writable=False, persistent=False, comment="", seq=0):
+    def __init__(self, key, value, name="", flag="dynamic", options=[], comment="", seq=0):
         assert key not in ("", "id"), key
+        assert flag in ("dynamic", "persistent", "readonly", "static"), flag
 
         # check validity of init value
         self.datatype = None
-        for t in (int, float, bool, basestring):
-            if isinstance(value, t):
-                self.datatype = t
-                break
+        if value in (True, False):
+            self.datatype = bool
+        else:
+            for t in (int, float, basestring):
+                if isinstance(value, t):
+                    self.datatype = t
+                    break
         if self.datatype==None:
-            raise Exception("invalid init value: not acceptable type"), value
+            raise Exception("invalid init value: must be a value of int, float, bool or string type")
 
         self.key = key
         self.name = name
+        self.flag = flag
+        self.init_value = value
+        self.value = value
         self.seq = seq
         self.comment = comment
-        self.value = value
-        self.init_value = value
-        self.persistent = persistent
-        self.writable = writable
         self.disabled = False
 
-        if options!=None:
-            assert len(options)>0
-            assert type(options) in (types.ListType, types.TupleType), options
-            opts = []
-            for x in options:
-                if type(x) in (types.ListType, types.TupleType):
-                    assert len(x)==2
-                    opts.append(x)
+        if len(options)>0:
+            # check options
+            assert isinstance(options, (list,type)), options
+            assert self.datatype in (int, basestring)
+            for i, x in enumerate(options):
+                if isinstance(x, (list,tuple)):
+                    assert isinstance(x[0], self.datatype)
+                    assert isinstance(x[1], basestring)
                 else:
-                    opts.append((str(x), str(x)))
-        else:
-            opts = None
-        self.options = opts
+                    assert isinstance(x, basestring)
+                    if self.datatype==int:
+                        val = i
+                    else:
+                        val = str(i)
+                    options[i] = (val, x)
+        self.options = options
 
 
     def set_value(self, val):
-        if isinstance(val, self.datatype) and self.writable and self.value!=val:
+        if self.flag in ("dynamic","persistent") and isinstance(val, self.datatype) and self.value!=val:
             self.value = val
             return True
         else:
@@ -54,20 +60,22 @@ class Param(object):
 
     def as_data(self):
         res = {
-            "seq": self.seq,
+            "key": self.key,
             "value": self.value,
-            "writable": self.writable,
-            "persistent": self.persistent,
+            "flag": self.flag,
+            "seq": self.seq,
         }
 
         if self.datatype==int:
             res['datatype'] = "int"
         elif self.datatype==float:
-            res['datatype'] = "number"
+            res['datatype'] = "float"
         elif self.datatype==basestring:
             res['datatype'] = "string"
         elif self.datatype==bool:
             res['datatype'] = "bool"
+        else:
+            raise NotImplementedError
 
         if self.name not in ("", self.key):
             res['name'] = self.name
@@ -75,8 +83,8 @@ class Param(object):
         if self.comment!="":
             res['comment'] = self.comment
 
-        if self.options!=None:
-            res['options'] = json.dumps(self.options)
+        if len(self.options)>0:
+            res['options'] = options
 
         return res
 

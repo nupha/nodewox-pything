@@ -2,8 +2,6 @@
 from node import Node, U8
 from messenger import Messenger
 from channel import Channel
-from google.protobuf.message import DecodeError
-import nodewox.thinese as thinese
 import signal
 import json
 import types
@@ -378,20 +376,25 @@ class Thing(Node):
                 subs.append("/NX/%d" % ch._id)
 
             # say hello from channel ch
-            res2 = ch.handle_request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
+            res2 = ch.handle_request(action=1)
             if res2!=None:
                 res.update(res2)
 
         if len(self._params)>0:
             # say hello from this thing
-            res2 = self.handle_request(thinese.Request(action=thinese.Request.ACTION_CHECK_PARAM_ALIVE))
+            res2 = self.handle_request(action=1)
             if res2!=None:
                 res.update(res2)
 
         # sub & pub
         mess.subscribe(subs)
         for topic, msg in res.items():
-            mess.publish(topic, bytearray(msg.SerializeToString()))
+            assert isinstance(msg, dict), msg
+            if len(msg)>0:
+                payload = bytearray(json.dumps(msg))
+            else:
+                payload = ""
+            mess.publish(topic, payload)
 
 
     def on_connect_fail(self, code, userdata):
@@ -408,10 +411,11 @@ class Thing(Node):
         self._running = False
 
 
-    def tick(self):
+    def loop(self):
         # tick each channel
         for ch in self.children.values():
-            ch.tick()
+            if ch.is_awake:
+                ch.loop()
 
 
     def start(self):
@@ -427,7 +431,7 @@ class Thing(Node):
 
         while self._running:
             # drive thing work
-            self.tick()
+            self.loop()
 
             # drive messenger work
             mess.loop()

@@ -1,12 +1,15 @@
 #coding: utf-8
 from node import Node
-import nodewox.thinese as thinese
+from Queue import Queue
+import types
+import time
+import struct
 
 class Channel(Node):
 
     # channel datatype decl.
-    DATA_TYPE = None  # invalidate
-    DATA_DIM = 0
+    DATA_TYPE = (None, 0)
+    NAME = "NONAME"
 
     def __init__(self, thing, key, flow, name="", latch=False, seq=0, exclusive=True, comment="", **kwargs):
         from thing import Thing
@@ -14,21 +17,16 @@ class Channel(Node):
         assert key!="" and "/" not in key, key
         assert flow in ("I", "O"), flow
 
-        datatype = self.DATA_TYPE
-        datadim = self.DATA_DIM
+        datatype, datadim = self.DATA_TYPE
+        assert datatype in ("int16", "int32", "int64", "byte", "float", "bool", "string", "raw"), datatype
         assert datadim>=0, datadim
-        if flow=="I":
-            assert datatype in (object, int, float, basestring, bool, bytearray), datatype
-        else:
-            assert datatype in (int, float, basestring, bool, bytearray), datatype
 
         self._parent = thing
         self._flow = flow
-        self._datatype = datatype
-        self._datadim = datadim
         self._latch = latch
         self._exclusive = exclusive
         self._seq = seq
+        self._time_wakeup = 0
 
         if name=="": name = self.NAME
         if name=="": name = chkey
@@ -38,27 +36,28 @@ class Channel(Node):
     def add_child(self, node):
         raise NotImplementedError
 
+    @property
+    def is_awake(self):
+        if self._time_wakeup!=0 and time.time() >= self._time_wakeup:
+            self._time_wakeup = 0
+        return self._time_wakeup==0
+
+
+    def sleep(self, ms):
+        if ms > 0:
+            self._time_wakeup = max(self._time_wakeup, time.time() + ms/1000.0)
+
 
     def as_data(self):
         assert self._parent!=None
         res = Node.as_data(self)
         res.update({
                 "flow": self._flow,
+                "datatype": self.DATA_TYPE,
                 "latch": self._latch,
                 "lang": "",
                 "seq": self._seq,
         })
-
-        if self._datatype==int:
-            res['datatype'] = ("int", self._datadim)
-        elif self._datatype==float:
-            res['datatype'] = ("number", self._datadim)
-        elif self._datatype==basestring:
-            res['datatype'] = ("string", self._datadim)
-        elif self._datatype==bool:
-            res['datatype'] = ("bool", self._datadim)
-        elif self._datatype==bytearray:
-            res['datatype'] = ("bin", self._datadim)
 
         if self._flow=="I":
             res['exclusive'] = self._exclusive
@@ -68,64 +67,178 @@ class Channel(Node):
         return res
 
 
-    def publish(self, topic, payload="", qos=0):
-        self.parent.publish(topic, payload=payload, qos=qos)
-
-
-    def subscribe(self, topic):
-        self.parent.subscribe(topic)
-
-
-    def unsubscribe(self, topic):
-        self.parent.unsubscribe(topic)
-
-
-    def handle_packet(self, packet):
-        pass
-
-
-
 class SourceChannel(Channel):
-    DATA_TYPE = int
+    DATA_TYPE = ("raw", 0)
+    QSIZE = 20
+
     def __init__(self, thing, key, **kwargs):
         Channel.__init__(self, thing, key, "O", **kwargs)
+        self._dataq = Queue(self.QSIZE)
 
+    def _encode_packet(self, data):
+        if self.DATA_TYPE[1] == "raw":
+            if len(data)>0:
+                assert isinstance(data, bytearray)
+                p = struct.pack("%dB" % len(data), *data)
+            else:
+                p = ""
+
+        else:
+            assert type(data) == types.ListType, data
+
+            if self.DATA_TYPE[0]=="byte":
+                p = struct.pack("%dB" % len(data), *data)
+            elif self.DATA_TYPE[1]=="int16":
+                p = struct.pack("!%dh" % len(data), *data)
+            elif self.DATA_TYPE[1]=="int32":
+                p = struct.pack("!%di" % len(data), *data)
+            elif self.DATA_TYPE[1]=="int64":
+                p = struct.pack("!%dl" % len(data), *data)
+            elif self.DATA_TYPE[1]=="float":
+                p = struct.pack("!%df" % len(data), *data)
+            elif self.DATA_TYPE[1]=="bool":
+                p = struct.pack("!%db" % len(data), *data)
+            elif self.DATA_TYPE[1]=="string":
+                fmt = ""
+                for s in data:
+                    fmt += "%ds" % (len(s)+1)
+                p = struct.pack(fmt, *data)
+            else:
+                raise NotImplementedError
+
+        return bytearray(p)
+
+
+    def clear_data(self):
+        while not self._dataq.empty():
+            self._dataq.get()
+
+    def feed_data(self, data, gid=0):
+        if self.DATA_TYPE[0]=="raw":
+            assert isinstance(data, bytearray), data
+
+        else:
+            if type(data) not in (types.ListType, types.TupleType):
+                data = [data]
+            else:
+                data = list(data)
+                if self.DATA_TYPE[1] > 0 and len(data) < self.DATA_TYPE[1]:
+                    # truncate
+                    data = data[self.DATA_TYPE[1]:]
+
+            # check data value
+            for i, x in enumerate(data):
+                if self.DATA_TYPE[0]=="int32":
+                    assert type(x)==types.IntType, x
+                    assert x>=-2147483648 and x<=2147483647, x
+                elif self.DATA_TYPE[0]=="int16":
+                    assert type(x)==types.IntType, x
+                    assert x>=-32768 and x<=32767, x
+                elif self.DATA_TYPE[0]=="int64":
+                    assert type(x)==types.IntType, x
+                    assert x>=-9223372036854775808 and x<=9223372036854775807, x
+                elif self.DATA_TYPE[0]=="bool":
+                    assert x in (True, False), x
+                    if x:
+                        data[i] = 1
+                    else:
+                        data[i] = 0
+                elif self.DATA_TYPE[0]=="string":
+                    assert type(x)==types.StringType, x
+                elif self.DATA_TYPE[0]=="float":
+                    assert type(x)==types.FloatType, x
+                elif self.DATA_TYPE[0]=="byte":
+                    if type(x)==types.IntType:
+                        assert x>=0 and x<=255, x
+                    elif type(x)==types.StringType:
+                        assert ord(x)>=0 and ord(x)<=255, ord(x)
+                        data[i] = ord(x)
+                    else:
+                        assert False, x
+
+        if self._dataq.full(): self._dataq.get()
+        self._dataq.put((gid, data))
+
+
+    def send_data(self):
+        n = 0
+        if self.get_id()>0:
+            mess = self.parent.get_messenger()
+            if mess.is_connected:
+                topic = "/NX/%d" % self.get_id()
+                while not self._dataq.empty():
+                    gid, data = self._dataq.get()
+                    p = self._encode_packet(data)
+                    assert isinstance(p, bytearray), p
+                    mess.publish(topic, p)
+                    n += 1
+        return n
+
+
+    def loop(self):
+        self.send_data()
 
 
 class ActuatorChannel(Channel):
-    DATA_TYPE = object  # any
+    DATA_TYPE = ("raw", 0)
+
     def __init__(self, thing, key, **kwargs):
         Channel.__init__(self, thing, key, "I", **kwargs)
 
-    def perform(self, src, gid, data):
-        return None
+    def perform(self, data, gid=0, src=0):
+        raise NotImplementedError
 
     def handle_packet(self, packet):
-        assert isinstance(packet, thinese.Packet), packet
+        assert isinstance(packet, (bytearray, basestring)), packet
+        if self.DATA_TYPE[0]=="raw":
+            data = bytearray(packet)
 
-        data = None
-        f = packet.WhichOneof("data")
-        if hasattr(packet, f):
-            if self._datatype==int and f=="int_array":
-                data = packet.int_array.value
-            elif self._datatype==float and f=="num_array":
-                data = packet.num_array.value
-            elif self._datatype==basestring and f=="str_array":
-                data = packet.str_array.value
-            elif self._datatype==bool and f=="bool_array":
-                data = packet.bool_array.value
-            elif self._datatype==bytearray and f=="var_array":
-                data = []
-                for x in packet.var_array.value:
-                    v = x.to_value()
-                    if v==None or isinstance(v, bytearray):
-                        data.append(v)
+        elif len(packet)==0:
+            data = []
+
+        else:
+            if self.DATA_TYPE[0]=="byte":
+                n = len(package) / struct.calcsize("B")
+                data = struct.unpack("%dB" % n, packet)
+            elif self.DATA_TYPE[0]=="int16":
+                n = len(package) / struct.calcsize("h")
+                data = struct.unpack("!%dh" % n, packet)
+            elif self.DATA_TYPE[0]=="int32":
+                n = len(package) / struct.calcsize("i")
+                data = struct.unpack("!%di" % n, packet)
+            elif self.DATA_TYPE[0]=="int64":
+                n = len(package) / struct.calcsize("l")
+                data = struct.unpack("!%dl" % n, packet)
+            elif self.DATA_TYPE[0]=="float":
+                n = len(package) / struct.calcsize("f")
+                data = struct.unpack("!%df" % n, packet)
+            elif self.DATA_TYPE[0]=="bool":
+                n = len(package) / struct.calcsize("B")
+                data = tuple(x!=0 for x in struct.unpack("!%dB" % n, packet))
+            elif self.DATA_TYPE[0]=="string":
+                strs = []
+                start = 0
+                while start < len(packet):
+                    sz = packet[start:].find('\0')
+                    assert sz>=0
+                    if sz==0:
+                        strs.append("")
                     else:
-                        data.append(None)
+                        strs.append(struct.unpack("%ds" % sz, packet[start:start+sz]))
+                    start += sz+1
 
-        if self._datatype!=None and data==None:
-            print("invalid packet data")
-            return
+            data = list(strs)
 
-        return self.perform(packet.src, packet.gid, data)
+        if isinstance(data, list) and self.DATA_TYPE[1]>0 and len(data)<self.DATA_TYPE[1]:
+            # list size padding
+            n = (self.DATA_TYPE[1]-len(data))
+            if self.DATA_TYPE[0] in ("byte", "int16", "int32", "int64", "float"):
+                data += [0] * n
+            elif self.DATA_TYPE[0]=="bool":
+                data += [False] * n
+            elif self.DATA_TYPE[0]=="string":
+                data += [""] * n
+
+        # perform action
+        return self.perform(data)
 
