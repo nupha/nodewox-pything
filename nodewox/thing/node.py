@@ -38,9 +38,10 @@ class Node(object):
         self._comment = comment
         self._params = {}
         self._children = {}
+        self._seq = 0
         self._id = None
 
-        self.setup(**kwargs)
+        self.setup()
 
 
     def setup(self, **kwargs):
@@ -61,10 +62,12 @@ class Node(object):
         return self._id
 
 
-    def add_child(self, node):
+    def add_child(self, node, seq=0):
         assert isinstance(node, Node), node
         assert node._parent==self
         assert node.key not in self._children, node.key
+        if node._seq==0:
+            node._seq = len(self._children)+1
         self._children[node.key] = node
         return node
 
@@ -120,8 +123,8 @@ class Node(object):
 
 
     def as_data(self):
-        assert self._key!=None
-        res = {"key":self._key}
+        assert isinstance(self._key, basestring) and self._key!=""
+        res = {"key":self._key, "seq":self._seq}
 
         if self._name not in ("", self._key):
             res['name'] = self._name
@@ -156,7 +159,7 @@ class Node(object):
         if report_params and len(self._params)>0:
             params = {}
             for p in self._params.values():
-                if p.flag != "STATIC":
+                if p.flag != "static":
                     params[p.key] = p.value
             if len(params)>0:
                 res['params'] = params

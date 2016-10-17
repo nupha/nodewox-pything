@@ -4,12 +4,13 @@ from Queue import Queue
 import types
 import time
 import struct
+import traceback
+import sys
 
 class Channel(Node):
 
     # channel datatype decl.
-    DATA_TYPE = (None, 0)
-    NAME = "NONAME"
+    DATA_TYPE = ("", 0)
 
     def __init__(self, thing, key, flow, name="", latch=False, seq=0, exclusive=True, comment="", **kwargs):
         from thing import Thing
@@ -17,9 +18,8 @@ class Channel(Node):
         assert key!="" and "/" not in key, key
         assert flow in ("I", "O"), flow
 
-        datatype, datadim = self.DATA_TYPE
-        assert datatype in ("int16", "int32", "int64", "byte", "float", "bool", "string", "raw"), datatype
-        assert datadim>=0, datadim
+        assert self.DATA_TYPE[0] in ("int16", "int32", "int64", "byte", "float", "bool", "string", ""), self.DATA_TYPE
+        assert self.DATA_TYPE[1]>=0, self.DATA_TYPE
 
         self._parent = thing
         self._flow = flow
@@ -53,11 +53,15 @@ class Channel(Node):
         res = Node.as_data(self)
         res.update({
                 "flow": self._flow,
-                "datatype": self.DATA_TYPE,
                 "latch": self._latch,
                 "lang": "",
                 "seq": self._seq,
         })
+
+        if self.DATA_TYPE[0]=="":
+            res['datatype'] = ("", 0)
+        else:
+            res['datatype'] = self.DATA_TYPE
 
         if self._flow=="I":
             res['exclusive'] = self._exclusive
@@ -68,7 +72,7 @@ class Channel(Node):
 
 
 class SourceChannel(Channel):
-    DATA_TYPE = ("raw", 0)
+    DATA_TYPE = ("", 0)
     QSIZE = 20
 
     def __init__(self, thing, key, **kwargs):
@@ -76,7 +80,7 @@ class SourceChannel(Channel):
         self._dataq = Queue(self.QSIZE)
 
     def _encode_packet(self, data):
-        if self.DATA_TYPE[1] == "raw":
+        if self.DATA_TYPE[1] == "":
             if len(data)>0:
                 assert isinstance(data, bytearray)
                 p = struct.pack("%dB" % len(data), *data)
@@ -88,17 +92,17 @@ class SourceChannel(Channel):
 
             if self.DATA_TYPE[0]=="byte":
                 p = struct.pack("%dB" % len(data), *data)
-            elif self.DATA_TYPE[1]=="int16":
+            elif self.DATA_TYPE[0]=="int16":
                 p = struct.pack("!%dh" % len(data), *data)
-            elif self.DATA_TYPE[1]=="int32":
+            elif self.DATA_TYPE[0]=="int32":
                 p = struct.pack("!%di" % len(data), *data)
-            elif self.DATA_TYPE[1]=="int64":
-                p = struct.pack("!%dl" % len(data), *data)
-            elif self.DATA_TYPE[1]=="float":
+            elif self.DATA_TYPE[0]=="int64":
+                p = struct.pack("!%dq" % len(data), *data)
+            elif self.DATA_TYPE[0]=="float":
                 p = struct.pack("!%df" % len(data), *data)
-            elif self.DATA_TYPE[1]=="bool":
+            elif self.DATA_TYPE[0]=="bool":
                 p = struct.pack("!%db" % len(data), *data)
-            elif self.DATA_TYPE[1]=="string":
+            elif self.DATA_TYPE[0]=="string":
                 fmt = ""
                 for s in data:
                     fmt += "%ds" % (len(s)+1)
@@ -114,7 +118,7 @@ class SourceChannel(Channel):
             self._dataq.get()
 
     def feed_data(self, data, gid=0):
-        if self.DATA_TYPE[0]=="raw":
+        if self.DATA_TYPE[0]=="":
             assert isinstance(data, bytearray), data
 
         else:
@@ -180,7 +184,7 @@ class SourceChannel(Channel):
 
 
 class ActuatorChannel(Channel):
-    DATA_TYPE = ("raw", 0)
+    DATA_TYPE = ("", 0)
 
     def __init__(self, thing, key, **kwargs):
         Channel.__init__(self, thing, key, "I", **kwargs)
@@ -190,44 +194,50 @@ class ActuatorChannel(Channel):
 
     def handle_packet(self, packet):
         assert isinstance(packet, (bytearray, basestring)), packet
-        if self.DATA_TYPE[0]=="raw":
+        if self.DATA_TYPE[0]=="":
             data = bytearray(packet)
 
         elif len(packet)==0:
             data = []
 
         else:
-            if self.DATA_TYPE[0]=="byte":
-                n = len(packet) / struct.calcsize("B")
-                data = struct.unpack("%dB" % n, packet)
-            elif self.DATA_TYPE[0]=="int16":
-                n = len(packet) / struct.calcsize("h")
-                data = struct.unpack("!%dh" % n, packet)
-            elif self.DATA_TYPE[0]=="int32":
-                n = len(packet) / struct.calcsize("i")
-                data = struct.unpack("!%di" % n, packet)
-            elif self.DATA_TYPE[0]=="int64":
-                n = len(packet) / struct.calcsize("l")
-                data = struct.unpack("!%dl" % n, packet)
-            elif self.DATA_TYPE[0]=="float":
-                n = len(packet) / struct.calcsize("f")
-                data = struct.unpack("!%df" % n, packet)
-            elif self.DATA_TYPE[0]=="bool":
-                n = len(packet) / struct.calcsize("B")
-                data = tuple(x!=0 for x in struct.unpack("!%dB" % n, packet))
-            elif self.DATA_TYPE[0]=="string":
-                data = []
-                start = 0
-                while start < len(packet):
-                    sz = packet[start:].find('\0')
-                    assert sz>=0
-                    if sz==0:
-                        data.append("")
-                    else:
-                        data.append(struct.unpack("%ds" % sz, packet[start:start+sz]))
-                    start += sz+1
+            # decode packet
+            try:
+                if self.DATA_TYPE[0]=="byte":
+                    n = len(packet) / struct.calcsize("B")
+                    data = struct.unpack("%dB" % n, packet)
+                elif self.DATA_TYPE[0]=="int16":
+                    n = len(packet) / struct.calcsize("h")
+                    data = struct.unpack("!%dh" % n, packet)
+                elif self.DATA_TYPE[0]=="int32":
+                    n = len(packet) / struct.calcsize("i")
+                    data = struct.unpack("!%di" % n, packet)
+                elif self.DATA_TYPE[0]=="int64":
+                    n = len(packet) / struct.calcsize("q")
+                    data = struct.unpack("!%dq" % n, packet)
+                elif self.DATA_TYPE[0]=="float":
+                    n = len(packet) / struct.calcsize("f")
+                    data = struct.unpack("!%df" % n, packet)
+                elif self.DATA_TYPE[0]=="bool":
+                    n = len(packet) / struct.calcsize("B")
+                    data = tuple(x!=0 for x in struct.unpack("!%dB" % n, packet))
+                elif self.DATA_TYPE[0]=="string":
+                    data = []
+                    start = 0
+                    while start < len(packet):
+                        sz = packet[start:].find('\0')
+                        assert sz>=0
+                        if sz==0:
+                            data.append("")
+                        else:
+                            data.append(struct.unpack("%ds" % sz, packet[start:start+sz]))
+                        start += sz+1
 
-            data = list(data)
+                data = list(data)
+
+            except:
+                data = None
+                traceback.print_exc(file=sys.stderr)
 
         if isinstance(data, list) and self.DATA_TYPE[1]>0 and len(data)<self.DATA_TYPE[1]:
             # list size padding
