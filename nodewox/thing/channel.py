@@ -198,36 +198,36 @@ class ActuatorChannel(Channel):
 
         else:
             if self.DATA_TYPE[0]=="byte":
-                n = len(package) / struct.calcsize("B")
+                n = len(packet) / struct.calcsize("B")
                 data = struct.unpack("%dB" % n, packet)
             elif self.DATA_TYPE[0]=="int16":
-                n = len(package) / struct.calcsize("h")
+                n = len(packet) / struct.calcsize("h")
                 data = struct.unpack("!%dh" % n, packet)
             elif self.DATA_TYPE[0]=="int32":
-                n = len(package) / struct.calcsize("i")
+                n = len(packet) / struct.calcsize("i")
                 data = struct.unpack("!%di" % n, packet)
             elif self.DATA_TYPE[0]=="int64":
-                n = len(package) / struct.calcsize("l")
+                n = len(packet) / struct.calcsize("l")
                 data = struct.unpack("!%dl" % n, packet)
             elif self.DATA_TYPE[0]=="float":
-                n = len(package) / struct.calcsize("f")
+                n = len(packet) / struct.calcsize("f")
                 data = struct.unpack("!%df" % n, packet)
             elif self.DATA_TYPE[0]=="bool":
-                n = len(package) / struct.calcsize("B")
+                n = len(packet) / struct.calcsize("B")
                 data = tuple(x!=0 for x in struct.unpack("!%dB" % n, packet))
             elif self.DATA_TYPE[0]=="string":
-                strs = []
+                data = []
                 start = 0
                 while start < len(packet):
                     sz = packet[start:].find('\0')
                     assert sz>=0
                     if sz==0:
-                        strs.append("")
+                        data.append("")
                     else:
-                        strs.append(struct.unpack("%ds" % sz, packet[start:start+sz]))
+                        data.append(struct.unpack("%ds" % sz, packet[start:start+sz]))
                     start += sz+1
 
-            data = list(strs)
+            data = list(data)
 
         if isinstance(data, list) and self.DATA_TYPE[1]>0 and len(data)<self.DATA_TYPE[1]:
             # list size padding

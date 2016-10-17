@@ -58,7 +58,7 @@ class Messenger(object):
             target = self._node
         else:
             target = None
-            for ch in self.children:
+            for ch in self._node.children.values():
                 if ch.get_id()==_id:
                     target = ch
                     break
@@ -94,7 +94,7 @@ class Messenger(object):
         chs = [x for x in self._node.children.values() if x.get_id()==_id]
         if len(chs) > 0:
             chan = chs[0]
-            if hasattr(chan, handle_packet):
+            if hasattr(chan, "handle_packet"):
                 chan.handle_packet(bytearray(msg.payload))
 
 
