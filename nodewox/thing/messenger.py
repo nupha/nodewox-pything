@@ -122,8 +122,8 @@ class Messenger(object):
         self._node.on_message(msg, userdata)
 
     def _on_log(self, client, userdata, level, buf):
-        print(level, buf)
-
+        #print(level, buf)
+        pass
 
     def publish(self, topic, data="", qos=0):
         if self.is_connected:

@@ -3,9 +3,9 @@ import json
 
 class Param(object):
 
-    def __init__(self, key, value, name="", flag="dynamic", options=[], comment="", seq=0):
+    def __init__(self, key, value, name="", flag="volatile", options=[], comment="", seq=0):
         assert key not in ("", "id"), key
-        assert flag in ("dynamic", "persistent", "readonly", "static"), flag
+        assert flag in ("volatile", "persistent", "readonly", "static"), flag
 
         # check validity of init value
         self.datatype = None
@@ -47,11 +47,17 @@ class Param(object):
 
 
     def set_value(self, val):
-        if self.flag in ("dynamic","persistent") and isinstance(val, self.datatype) and self.value!=val:
-            self.value = val
-            return True
-        else:
-            return False
+        if self.flag in ("volatile", "persistent", "readonly"):
+            if self.datatype==float and isinstance(val, int):
+                val = float(val)
+            elif self.datatype==bool and isinstance(val, int):
+                val = val!=0
+
+            if isinstance(val, self.datatype):
+                self.value = val
+                return True
+
+        return False
 
 
     def reset(self):

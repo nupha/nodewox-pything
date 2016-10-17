@@ -86,7 +86,7 @@ class Node(object):
     def has_param(self, key):
         return self._params.has_key(key)
 
-    def add_param(self, key, value, name="", comment="", options=[], flag="dynamic", seq=-1):
+    def add_param(self, key, value, name="", comment="", options=[], flag="volatile", seq=-1):
         "defina a parameter with type of value"
         assert not self.has_param(key), key
         p = Param(key, value, name=name, options=options, flag=flag, comment=comment, seq=seq)

@@ -29,7 +29,7 @@ class Channel(Node):
         self._time_wakeup = 0
 
         if name=="": name = self.NAME
-        if name=="": name = chkey
+        if name=="": name = key
         Node.__init__(self, key, parent=thing, name=name, comment=comment, **kwargs)
 
 
