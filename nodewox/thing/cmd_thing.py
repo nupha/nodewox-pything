@@ -1,5 +1,6 @@
 #coding: utf-8
 from thing import Thing
+from node import U8
 import sys
 import optparse
 import json
@@ -7,25 +8,43 @@ import types
 import os
 import zipfile
 import getpass
+import uuid
 import traceback
 
-class ProfileExistsError(Exception): 
-    pass
-
-
-def _check_profile(filename):
+def _load_profile(filename):
     path = [os.getcwd(), "/var/lib/nodewox/profiles/"]
+    data = None
+
     for p in path:
         f = os.path.join(p, filename)
         if os.path.isfile(f):
-            return f
+            fh = open(f)
+            try:
+                data = U8(json.load(fh))
+            except:
+                pass
+            finally:
+                fh.close()
+
+            if data:
+                if data.get("key", "")=="":
+                    sys.stderr.write("invalid profile %s\n" % filename)
+                if data.get("rest_url", "")=="":
+                    sys.stderr.write("invalid profile %s\n" % filename)
+                break
+
+    if data:
+        return f, data
+    else:
+        sys.stderr.write("can't find profile %s\n" % filename)
+        return None, None
 
 
 def _load_index(filename, default=None, show_err=True):
     if os.path.exists(filename):
         try:
             fh = open(filename, "rb")
-            thindex = json.load(fh)
+            thindex = U8(json.load(fh))
             fh.close()
             if type(thindex)==types.DictType:
                 return thindex
@@ -41,60 +60,74 @@ def _load_index(filename, default=None, show_err=True):
     return default
 
 
-def _load_thing_class(entry, show_err=True):
+def _load_thing_class(index, show_err=True):
     thindex = _load_index("/var/lib/nodewox/index.json", show_err=show_err)
-
     if thindex==None:
         if show_err:
             sys.stderr.write("cannot read thing index")
         return None
 
-    if entry not in thindex:
+    if index not in thindex:
         if show_err:
-            sys.stderr.write("thing not installed: %s\n" % entry)
+            sys.stderr.write("thing not installed: %s\n" % index)
         return None
 
     res = None
-    t = thindex[entry]
+    t = thindex[index]
 
     sys.path.append(t['package'])
     try:
-        m = __import__(t['module'])
+        names = t['module'].split(".")
+        m = __import__(t['module'], fromlist=names[:-1])
         res = getattr(m, t['class'])
         assert type(res)==types.TypeType and issubclass(res, Thing)
         return res
     except:
         if show_err:
             traceback.print_exc(file=sys.stderr)
-            sys.stderr.write("fail to load class for thing %s\n" % entry)
+            sys.stderr.write("fail to load class for thing %s\n" % t['package'])
     finally:
         sys.path.remove(t['package'])
 
 
-def _make_thing(thing_name, profile, show_err=True):
-    cls = _load_thing_class(thing_name, show_err=show_err)
+def _thing_instantiate(profile, show_err=True):
+    filename, data = _load_profile(profile)
+    if data==None:
+        sys.stderr.write("cannot load profile %s\n" % profile)
+        return None
+
+    if "index" not in data:
+        sys.stderr.write("profile %s missing index field\n" % profile)
+        return None
+
+    cls = _load_thing_class(data['index'], show_err=show_err)
     if cls!=None:
-        pfname = _check_profile(profile)
-        if pfname==None:
+        if getattr(cls, "PID", None)!=data.get("pid"):
             if show_err:
-                sys.stderr.write("profile %s not exist\n" % profile)
-        else:
-            # check thing/profile match
-            fh = open(pfname, "rb")
-            data = json.load(fh)
-            fh.close()
+                sys.stderr.write("thing and profile don't match\n")
+                return
 
-            if getattr(cls, "PID", None)!=data.get("pid"):
-                if show_err:
-                    sys.stderr.write("thing and profile don't match\n")
-                    return
+        try:
+            args = {
+                    "rest_url": data['rest_url'],
+                    "rest_ca": data.get("rest_ca") or "",
+                    "certfile": data.get("certfile") or "",
+                    "keyfile": data.get("keyfile") or "",
+                    "cafile": data.get("cafile") or "",
+                    "password": data.get("password") or "",
+            }
 
-            try:
-                return cls(pfname)
-            except:
-                if show_err:
-                    traceback.print_exc(file=sys.stderr)
-                    sys.stderr.write("\nfail to make instance for thing %s\n" % thing_name)
+            # fix fullpath
+            path = os.path.dirname(filename)
+            for k in ("cafile", "certfile", "keyfile", "rest_ca"):
+                if args[k]!="":
+                    args[k] = os.path.join(path, args[k])
+            return cls(data['key'], **args)
+
+        except:
+            if show_err:
+                traceback.print_exc(file=sys.stderr)
+                sys.stderr.write("\nfail to make instance for profile %s\n" % profile)
 
 
 def _cmd_install(argv):
@@ -112,7 +145,7 @@ def _cmd_install(argv):
     for pkg in args:
         pkg = os.path.abspath(pkg)
         if not zipfile.is_zipfile(pkg):
-            sys.stderr.write("not a valid zip file %s\n" % pkg)
+            sys.stderr.write("'%s' is not a valid package\n" % pkg)
             continue
 
         z = zipfile.ZipFile(pkg)
@@ -122,28 +155,27 @@ def _cmd_install(argv):
                 mods.add(n[:-len("/__init__.py")])
 
         sys.path.append(pkg)
-        for mname in list(mods):
-            m = __import__(mname)
-            lst = []
-            for v in vars(m).values():
-                if type(v)==types.TypeType and issubclass(v, Thing):
-                    lst.append(v.__name__)
+        for path in list(mods):
+            classes = []
+            names = path.split("/")
 
-            if len(lst)==1:
-                sys.stdout.write("%s\n" % mname)
-                thindex[mname] = {
-                    "package": pkg,
-                    "module": mname,
-                    "class": lst[0],
-                }
-            else:
-                for c in lst:
-                    k = "%s:%s" % (mname, c)
-                    sys.stdout.write("%s\n" % k)
-                    thindex[k] = {
-                        "package": pkg,
-                        "module": mname,
-                        "class": c,
+            if len(names)>0:
+                m = __import__(".".join(names), fromlist=names[:-1])
+                for v in vars(m).values():
+                    if type(v)==types.TypeType and issubclass(v, Thing):
+                        if v.PID > 0:
+                            classes.append((str(v.PID), v))
+                        else:
+                            classes.append((".".join(names+[v.__name__]), v))
+
+            if len(classes) > 0:
+                for index, c in classes:
+                    sys.stdout.write("installed %s\n" % index)
+                    thindex[index] = {
+                            "package": pkg,
+                            "module": ".".join(names),
+                            "class": c.__name__,
+                            "name": c.NAME,
                     }
 
         sys.path.remove(pkg)
@@ -156,12 +188,12 @@ def _cmd_install(argv):
 
 def _cmd_list(argv):
     thindex = _load_index("/var/lib/nodewox/index.json", default={}, show_err=False)
-    for k in sorted(thindex.keys()):
+    for k, v in sorted([(x,y) for x,y in thindex.items()]):
         sys.stdout.write("%s\n" % k)
 
 
 def _cmd_profile(argv):
-    p = optparse.OptionParser(usage="%prog [options] thing-name profile-name")
+    p = optparse.OptionParser(usage="%prog [options] <thing-index> <profile-name>")
 
     p.add_option('-u', '--rest-url', 
             action="store", type="string", dest="rest_url", default="https://www.nodewox.org/api",
@@ -175,13 +207,17 @@ def _cmd_profile(argv):
             action="store", type="string", dest="key", default="",
             help="identity of thing, auto-generate if not specified")
 
-    p.add_option('-s', '--secret', 
-            action="store", type="string", dest="secret", default="",
+    p.add_option('-s', '--password', 
+            action="store", type="string", dest="password", default="",
             help="thing password, auto-generate if not specified")
     
     p.add_option('-p', '--path',
             action="store", type="string", dest="path", default="/var/lib/nodewox/profiles/",
             help="profile store path, default to '/var/lib/nodewox/profiles/'")
+
+    p.add_option('-f', '--force',
+            action="store_true", dest="force", default=False,
+            help="override existing profile")
 
     opts, args = p.parse_args(argv[1:])
 
@@ -189,10 +225,13 @@ def _cmd_profile(argv):
         sys.stderr.write("both thing-name and profile-name is required\n")
         sys.exit(-1)
 
-    entry = args[0]
-    cls = _load_thing_class(entry)
+    index = args[0]
+    cls = _load_thing_class(index)
     if cls==None:
         sys.exit(-1)
+
+    if cls.PID > 0:
+        assert index==str(cls.PID)
 
     profile = args[1]
     for c in "*/?`()[]{}^&~;":
@@ -201,7 +240,7 @@ def _cmd_profile(argv):
             sys.exit(-1)
 
     profile = os.path.join(opts.path, profile)
-    if os.path.isfile(profile):
+    if not opts.force and os.path.isfile(profile):
         sys.stderr.write("file %s already exists\n" % profile)
         sys.exit(-1)
 
@@ -225,18 +264,29 @@ def _cmd_profile(argv):
         if len(opts.key)<32:
             print(sys.stderr, "key width too small (must be greater than 32)")
             sys.exit(-1)
+    else:
+        opts.key = str(uuid.uuid1()).replace("-", "")
 
-    try:
-        f = cls.create_profile(profile, rest_url=opts.rest_url, rest_ca=opts.rest_ca, key=opts.key, secret=opts.secret)
-        print("profile created %s" % f)
-    except ProfileExistsError:
-        sys.stderr.write("profile %s already exists\n" % args[0])
-    except:
-        raise
+    if opts.password=="":
+        opts.password = str(uuid.uuid1()).replace("-", "")
+
+    d = {"index":index, "key":opts.key, "password":opts.password, "rest_url":opts.rest_url}
+    if cls.PID > 0:
+        d['pid'] = cls.PID
+
+    if opts.rest_ca!="":
+        d['rest_ca'] = os.path.abspath(opts.rest_ca)
+
+    os.umask(0o177)
+    fh = open(profile, "w")
+    fh.write(json.dumps(d, ensure_ascii=False, indent=4))
+    fh.close()
+
+    sys.stdout.write("profile created %s\n" % profile)
 
 
 def _cmd_register(argv):
-    p = optparse.OptionParser("%s [options] <thing-name> <profile-name>" % argv[0])
+    p = optparse.OptionParser("%s [options] <profile>" % argv[0])
     p.add_option("-u", "--username", 
             action="store", type="string", dest="username", default="",
             help="your nodewox.org account name")
@@ -247,7 +297,7 @@ def _cmd_register(argv):
 
     try:
         opts, args = p.parse_args(argv[1:])
-        assert len(args)==2
+        assert len(args)==1
     except:
         p.print_help(sys.stdout)
         sys.exit(-1)
@@ -264,11 +314,76 @@ def _cmd_register(argv):
             sys.stdout.write("\n")
             sys.exit(-1)
 
-    thing = _make_thing(args[0], args[1])
-    if thing!=None:
-        thing.register(opts.username, passwd)
-    else:
+    profile = args[0]
+    thing = _thing_instantiate(profile)
+
+    if thing==None:
         sys.exit(-1)
+
+    # do thing register
+    status, content = thing.register(opts.username, passwd)
+
+    if status != 200:
+        sys.stderr.write("register fail (status=%d) %s" % (status, content))
+        sys.exit(-1)
+
+    ack = None
+    try:
+        d = json.loads(content)
+    except:
+        sys.stderr.write("invalid response message %s" % content)
+        sys.exit(-1)
+
+    if d.get('status') != 0:
+        sys.stderr.write("ERROR(%d): %s\n" % (d['status'], d.get('response',"")))
+        sys.exit(-1)
+
+    # update local profile
+    ack = d['response']
+    filename, data = _load_profile(profile)
+    path = os.path.dirname(filename)
+    os.umask(0o177)
+
+    for k in ("cafile", "certfile", "keyfile"):
+        if k in data:
+            fname = os.path.join(path, data[k])
+            if os.path.isfile(fname):
+                del data[k]
+                os.remove(fname)
+
+    if "cert" in ack:
+        # save mqtt client cert
+        fname = "%s.pem" % os.path.basename(profile)
+        fh = open(os.path.join(path, fname), "w")
+        fh.write(ack['cert'])
+        fh.close()
+        data['certfile'] = fname
+        data['keyfile'] = fname
+
+    if "key" in ack:
+        # save mqtt client cert
+        fname = "%s.key.pem" % os.path.basename(profile)
+        fh = open(os.path.join(path, fname), "w")
+        fh.write(ack['key'])
+        fh.close()
+        data['keyfile'] = fname
+
+    if "trust" in ack:
+        # save mqtt ca
+        fname = os.path.join("/var/lib/nodewox/trust/", "%s.pem" % os.path.basename(profile))
+        fh = open(fname, "w")
+        fh.write(ack['trust'])
+        fh.close()
+        data['cafile'] = fname
+
+        # c_rehash for new ca
+        # TODO...
+
+    fh = open(filename, "w")
+    json.dump(data, fh, ensure_ascii=False, indent=4)
+    fh.close()
+
+    sys.stdout.write("registered\n")
 
 
 def _cmd_start(argv):
@@ -276,17 +391,18 @@ def _cmd_start(argv):
 
     try:
         opts, args = p.parse_args(argv[1:])
-        assert len(args)>1
+        assert len(args)>=1
     except:
         p.print_help(sys.stdout)
         sys.exit(-1)
 
-    thing = _make_thing(args[0], args[1])
+    profile = args[0]
+    thing = _thing_instantiate(profile)
     if thing==None:
         sys.exit(-1)
 
     if not thing.is_registered:
-        sys.stderr.write("this thing not registered\n")
+        sys.stderr.write("thing is not registered\n")
         sys.exit(-1)
 
     if not thing.load_remote_profile():

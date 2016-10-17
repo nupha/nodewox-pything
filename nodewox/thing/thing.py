@@ -10,8 +10,6 @@ import re
 import pycurl
 import urlparse
 import StringIO
-import uuid
-import sys, optparse
 
 PAT_REQ   = re.compile(r"^\/NX\/(\d+)\/q$")
 PAT_EVENT = re.compile(r"^\/NX\/(\d+)$")
@@ -25,30 +23,40 @@ class Thing(Node):
     # messenger class decl.
     MESSENGER_CLASS = Messenger
 
-    def __init__(self, profile, secret=None, **kwargs):
+    def __init__(self, key, rest_url, rest_ca="", cafile="", certfile="", keyfile="", password=""):
+        assert isinstance(key, basestring) and key!="" and "/" not in key, key
+        assert isinstance(rest_url, basestring) and rest_url!="", rest_url
         assert issubclass(self.MESSENGER_CLASS, Messenger), self.MESSENGER_CLASS
 
-        profile = os.path.abspath(profile)
-        assert os.path.isfile(profile), profile
+        if rest_ca!="":
+            assert os.path.isfile(rest_ca), rest_ca
 
-        self._running = False
+        if certfile!="":
+            assert os.path.isfile(certfile), certfile
 
-        self._profile = profile
-        self._rest_url = ""
-        self._rest_ca = ""
-        self._secret = secret
+        if keyfile!="":
+            assert os.path.isfile(keyfile), keyfile
+
+        if cafile!="":
+            assert os.path.isfile(cafile), cafile
+
+        self._key = key
+        self._rest_url = rest_url
+        self._rest_ca = rest_ca
+        self._certfile = certfile
+        self._keyfile = keyfile
+        self._cafile = cafile
+        self._password = password
+
         self._messenger = None
-
-        self.load_local_profile()
-        assert self._key not in (None, "")
+        self._running = False
 
         Node.__init__(self, self._key, name=self.NAME)
 
 
     @property
     def is_registered(self):
-        return self._key!="" and self._certfile!="" and self._rest_url!=""
-
+        return self._certfile!="" and self._rest_url!=""
 
     def get_messenger(self):
         if self._messenger==None:
@@ -56,7 +64,7 @@ class Thing(Node):
             args = {
                     "host": self._host,
                     "port": self._port,
-                    "unpw": (self._username, self._password),
+                    "unpw": (self._key, self._password),
                     "cafile": self._cafile,
                     "certfile": self._certfile,
                     "keyfile": self._keyfile,
@@ -83,48 +91,6 @@ class Thing(Node):
 
         res['children'] = dict((x.key,x.as_data()) for x in self.children.values())
         return res
-
-
-    def load_local_profile(self):
-        "读取本地配置"
-        assert os.path.isfile(self._profile), self._profile
-
-        fh = open(self._profile, "r")
-        data = U8(json.load(fh))
-        fh.close()
-
-        # assert pid match
-        assert self.PID == data.get("pid"), (self.PID, data.get("pid"))
-
-        self._key = data['key']
-        assert self._key!=""
-
-        self._rest_url = data['rest_url']
-        assert self._rest_url.startswith("https://")
-
-        path = os.path.dirname(self._profile)
-
-        f = data.get("rest_ca", "")
-        if f!="":
-            self._rest_ca = os.path.join(path, f)
-
-        # thing trust
-        f = "/var/lib/nodewox/trust/thing_%s.pem" % os.path.basename(self._profile)
-        if os.path.isfile(f):
-            self._cafile = f
-
-        # thing cert
-        f = data.get("cert", "")
-        if f!="":
-            self._certfile = os.path.join(path, f)
-            assert os.path.isfile(self._certfile), self._certfile
-            self._keyfile = self._certfile
-
-        if self._secret==None:
-            self._secret = data.get("secret")
-
-        self._username = self._key
-        self._password = self._secret
 
 
     def _setup_curl(self, url, headers={}, debug=False):
@@ -170,7 +136,7 @@ class Thing(Node):
         assert self.is_registered
 
         headers = {
-            "authorization": "CERT %s" % self._secret,
+            "authorization": "CERT %s" % self._password,
             "x-requested-with": "XMLHttpRequest",
         }
         c, b = self._setup_curl(os.path.join(self._rest_url, "thing/profile"), headers=headers)
@@ -187,14 +153,13 @@ class Thing(Node):
             # not ok
             if status in (403, 404):
                 # remove register info, if remote profile not exists
-                print("remove register info")
-                self.clear_registry()
+                print("thing not registered %s" % status)
             else:
                 print(status, content)
             return False
 
         try:
-            d = json.loads(content)
+            d = U8(json.loads(content))
             if d['status']<0:
                 print(d['status'], d['response'])
                 return False
@@ -262,11 +227,11 @@ class Thing(Node):
 
     def register(self, user, passwd):
         "register the thing to nodewox host"
-        assert self._secret != None
+        assert self._password != None
 
         # make thing meta
         info = self.as_data()
-        info['secret'] = self._secret
+        info['secret'] = self._password
 
         headers = {
                 "authorization": "USERPW %s\t%s" % (user, passwd),
@@ -281,68 +246,16 @@ class Thing(Node):
         c.perform()
         status = c.getinfo(pycurl.HTTP_CODE)
         content = b.getvalue()
+        return status, content
 
-        if status!=200:
-            print("register fail (status=%d)" % status)
-            return False
-
-        try:
-            d = U8(json.loads(content))
-            if d['status']<0:
-                print(d['response'])
-                return False
-            else:
-                ack = d['response']
-        except:
-            return False
-
-        # update local profile
-        cfg = {
-                "key": self._key,
-                "rest_url": self._rest_url,
-                "secret": self._secret,
-        }
-        if self._rest_ca!="":
-            cfg['rest_ca'] = self._rest_ca
-        path = os.path.dirname(self._profile)
-
-        os.umask(0o177)
-
-        if "cert" in ack:
-            # save mqtt client cert
-            fname = "%s.pem" % os.path.basename(self._profile)
-            cfg['cert'] = fname
-            self._certfile = self._keyfile = os.path.join(path, fname)
-
-            fh = open(self._certfile, "w")
-            fh.write(ack['cert'])
-            fh.close()
-
-        if "trust" in ack:
-            # save mqtt ca
-            fname = os.path.join("/var/lib/nodewox/trust/", "thing_%s.pem" % os.path.basename(self._profile))
-            fh = open(fname, "w")
-            fh.write(ack['trust'])
-            fh.close()
-
-            # c_rehash for new ca
-            # TODO...
-
-        fh = open(self._profile, "w")
-        json.dump(cfg, fh, ensure_ascii=False, indent=4)
-        fh.close()
-
-        self.load_local_profile()
-        return True
-
-
+    '''
     def clear_registry(self):
         if self.is_registered:
             # drop thing cert
             os.remove(self._certfile)
 
             # drop thing ca
-            f = "/var/lib/nodewox/trust/thing_%s.pem" % os.path.base(self._profile)
+            f = "/var/lib/nodewox/trust/%s.pem" % os.path.base(self._profile)
             if os.path.isfile(f):
                 os.remove(f)
 
@@ -350,7 +263,7 @@ class Thing(Node):
             cfg = {
                 "key": self._key,
                 "rest_url": self._rest_url,
-                "secret": self._secret,
+                "password": self._password,
             }
             if self._rest_ca!="":
                 cfg['rest_ca'] = self._rest_ca
@@ -361,7 +274,7 @@ class Thing(Node):
             fh.close()
 
             self._certfile = self._keyfile = ""
-
+    '''
 
     def on_connected(self, userdata):
         # listen on topics
@@ -436,39 +349,3 @@ class Thing(Node):
             # drive messenger work
             mess.loop()
 
-
-    @classmethod
-    def create_profile(cls, name, rest_url="https://www.nodewox.org/api", rest_ca="", key="", secret=""):
-        assert name!=""
-        assert rest_url.startswith("https://")
-        assert len(rest_url)>8, rest_url
-        if rest_url.endswith("/"):
-            rest_url = rest_url[:-1]
-
-        f = os.path.abspath(name)
-        assert not os.path.exists(f)
-
-        if key=="":
-            key = str(uuid.uuid1()).replace("-", "")
-
-        if secret=="":
-            secret = str(uuid.uuid1()).replace("-", "")
-
-        d = {"key":key, "secret":secret, "rest_url":rest_url}
-        if cls.PID!=None:
-            d['pid'] = cls.PID
-
-        if rest_ca!="":
-            caf = os.path.abspath(rest_ca)
-            assert os.path.isfile(caf)
-            p = "%s/" % os.path.dirname(f)
-            if caf.startswith(p):
-                caf = caf[len(p):]
-            d['rest_ca'] = caf
-
-        os.umask(0o177)
-        fh = open(f, "w")
-        fh.write(json.dumps(d, ensure_ascii=False, indent=4))
-        fh.close()
-
-        return f

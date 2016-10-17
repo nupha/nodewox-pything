@@ -165,7 +165,7 @@ class Node(object):
 
         if len(children)>0:
             # request into children
-            for c in self.children:
+            for c in self.children.values():
                 if c.get_id() in children:
                     r = c.handle_request(action=action)
                     if type(r)==types.DictType:

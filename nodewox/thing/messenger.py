@@ -2,6 +2,7 @@
 import paho.mqtt.client as mqtt
 import time
 import traceback
+import json
 import re
 
 PAT_REQ    = re.compile(r"^\/NX\/(\d+)\/q$")
@@ -54,7 +55,7 @@ class Messenger(object):
     def ack_msg_request(self, client, userdata, msg):
         _id = int(PAT_REQ.findall(msg.topic)[0])
         if _id == self._node.get_id():
-            target = self
+            target = self._node
         else:
             target = None
             for ch in self.children:
@@ -68,6 +69,7 @@ class Messenger(object):
                 try:
                     req = json.loads(msg.payload)
                 except:
+                    traceback.print_exc()
                     print("ERROR: invalid request message")
                     return
 
