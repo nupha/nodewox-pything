@@ -142,11 +142,11 @@ class Node(object):
         return res
 
 
-    def handle_request(self, action=0, params={}, children=[]):
+    def handle_request(self, action="", params={}, children=[]):
         "processe an incomming request"
         assert self._id > 0
 
-        report_params = (action==1)
+        report_params = (action=="status")
 
         # set params
         if len(params)>0:

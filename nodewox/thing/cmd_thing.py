@@ -40,6 +40,25 @@ def _load_profile(filename):
         return None, None
 
 
+def _profile_clear_registry(profile):
+    filename, data = _load_profile(profile)
+    if data!=None:
+        path = os.path.dirname(filename)
+
+        for k in ("cafile", "certfile", "keyfile"):
+            if data.get(k, "")!="":
+                f = os.path.join(path, data[k])
+                if os.path.isfile(f):
+                    os.remove(f)
+                del data[k]
+
+        # save profile
+        os.umask(0o177)
+        fh = open(filename, "w")
+        json.dump(data, fh, ensure_ascii=False, indent=4)
+        fh.close()
+
+
 def _load_index(filename, default=None, show_err=True):
     if os.path.exists(filename):
         try:
@@ -405,11 +424,15 @@ def _cmd_start(argv):
         sys.stderr.write("thing is not registered\n")
         sys.exit(-1)
 
-    if not thing.load_remote_profile():
-        sys.stderr.write("cannot load profile from host\n")
+    status, resp = thing.load_remote_profile()
+    if status == 0:
+        thing.start()
+    elif status == 404:
+        sys.stderr.write("can't find register info on host, clear registry for '%s'\n" % profile)
+        _profile_clear_registry(profile)
+    else:
+        sys.stderr.write("cannot load profile from host: %s %s\n" % (status, resp))
         sys.exit(-1)
-
-    thing.start()
 
 
 def commands():

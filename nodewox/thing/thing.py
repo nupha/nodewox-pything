@@ -149,20 +149,13 @@ class Thing(Node):
         status = c.getinfo(pycurl.HTTP_CODE)
         content = b.getvalue()
 
-        if status!=200:
-            # not ok
-            if status in (403, 404):
-                # remove register info, if remote profile not exists
-                print("thing not registered %s" % status)
-            else:
-                print(status, content)
-            return False
+        if status != 200:
+            return status, content
 
         try:
             d = U8(json.loads(content))
-            if d['status']<0:
-                print(d['status'], d['response'])
-                return False
+            if d['status'] != 0:
+                return d['status'], d['response']
 
             resp = U8(d['response'])
 
@@ -215,14 +208,14 @@ class Thing(Node):
                         if len(pvs)>0:
                             ch.set_params(pvs)
 
-            return True
+            return 0, resp
 
         except:
             import traceback
             print("*" * 20)
             traceback.print_exc()
             print("*" * 20)
-            return False
+            return -1, "ERROR"
 
 
     def register(self, user, passwd):
@@ -248,33 +241,15 @@ class Thing(Node):
         content = b.getvalue()
         return status, content
 
-    '''
-    def clear_registry(self):
-        if self.is_registered:
-            # drop thing cert
-            os.remove(self._certfile)
 
-            # drop thing ca
-            f = "/var/lib/nodewox/trust/%s.pem" % os.path.base(self._profile)
-            if os.path.isfile(f):
-                os.remove(f)
+    def handle_request(self, action="", params={}, children=[]):
+        if action=="unregister":
+            self.on_unregister()
+        else:
+            return super(Thing, self).handle_request(action=action, params=params, children=children)
 
-            # reset profile
-            cfg = {
-                "key": self._key,
-                "rest_url": self._rest_url,
-                "password": self._password,
-            }
-            if self._rest_ca!="":
-                cfg['rest_ca'] = self._rest_ca
-
-            os.umask(0o177)
-            fh = open(self._profile, "w")
-            json.dump(cfg, fh, ensure_ascii=False, indent=4)
-            fh.close()
-
-            self._certfile = self._keyfile = ""
-    '''
+    def on_unregister(self):
+        self.stop()
 
     def on_connected(self, userdata):
         # listen on topics
@@ -289,13 +264,13 @@ class Thing(Node):
                 subs.append("/NX/%d" % ch._id)
 
             # say hello from channel ch
-            res2 = ch.handle_request(action=1)
+            res2 = ch.handle_request(action="status")
             if res2!=None:
                 res.update(res2)
 
         if len(self._params)>0:
             # say hello from this thing
-            res2 = self.handle_request(action=1)
+            res2 = self.handle_request(action="status")
             if res2!=None:
                 res.update(res2)
 
@@ -348,4 +323,8 @@ class Thing(Node):
 
             # drive messenger work
             mess.loop()
+
+
+    def stop(self):
+        self._running = False
 

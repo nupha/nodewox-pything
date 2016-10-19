@@ -74,7 +74,7 @@ class Messenger(object):
                     return
 
             args = {
-                    "action": req.get("action", 0),
+                    "action": req.get("action", ""),
                     "params": req.get("params") or {},
                     "children": req.get("children") or [],
             }
