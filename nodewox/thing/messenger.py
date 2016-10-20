@@ -10,13 +10,15 @@ PAT_PACKET = re.compile(r"^\/NX\/(\d+)$")
 
 class Messenger(object):
 
-    def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile=""):
+    def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile="", reconnect=1000):
         from node import Node
         assert isinstance(master_node, Node), master_node
 
         self._node = master_node
         self._host = host
         self._port = port
+        self._reconnect = reconnect
+
         self._certfile = certfile
         self._keyfile = keyfile
         self._cafile = cafile
@@ -26,7 +28,7 @@ class Messenger(object):
         else:
             self._username = self._password = ""
 
-        # runtime        
+        # runtime
         self._reconnect_factor = 1
         self._reconnect_try = 0
         self._next_connect_time = time.time()
@@ -125,10 +127,10 @@ class Messenger(object):
         #print(level, buf)
         pass
 
+
     def publish(self, topic, data="", qos=0):
         if self.is_connected:
             self._client.publish(topic, data, qos)
-
 
     def subscribe(self, topic):
         if self._client:
@@ -138,7 +140,6 @@ class Messenger(object):
                 assert isinstance(topic, (list, tuple)), topic
                 assert len(topic)>0
             self._client.subscribe([(x,2) for x in set(topic)])
-
 
     def unsubscribe(self, topic):
         if self._client:
@@ -153,12 +154,10 @@ class Messenger(object):
     def get_client_id(self):
         return self._node._key
 
-
     def get_will(self):
         return ("/NX/%d/r" % self._node.get_id(), '{"ack":"bye"}')
 
-
-    def _prepare_connection(self, conn):
+    def make_connection(self, conn):
         conn.reinitialise(client_id=self.get_client_id(), clean_session=True)
 
         # mqtt callbacks
@@ -193,9 +192,7 @@ class Messenger(object):
 
         conn.message_callback_add("/NX/+/q", self.ack_msg_request)
         conn.message_callback_add("/NX/+", self.ack_msg_packet)
-
         return conn
-
 
     def connect(self):
         assert self._host!=""
@@ -208,7 +205,7 @@ class Messenger(object):
             self._reconnect_try += 1
 
             if self._client == None:
-                self._client = self._prepare_connection(mqtt.Client())
+                self._client = self.make_connection(mqtt.Client())
                 reconn = False
             else:
                 reconn = True

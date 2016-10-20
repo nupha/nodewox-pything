@@ -23,9 +23,9 @@ class Thing(Node):
     # messenger class decl.
     MESSENGER_CLASS = Messenger
 
-    def __init__(self, key, rest_url, rest_ca="", cafile="", certfile="", keyfile="", password=""):
+    def __init__(self, key, rest_url="", rest_ca="", host="", port=-1, cafile="", certfile="", keyfile="", username="", password="", reconnect=1000):
         assert isinstance(key, basestring) and key!="" and "/" not in key, key
-        assert isinstance(rest_url, basestring) and rest_url!="", rest_url
+        assert isinstance(rest_url, basestring), rest_url
         assert issubclass(self.MESSENGER_CLASS, Messenger), self.MESSENGER_CLASS
 
         if rest_ca!="":
@@ -43,11 +43,23 @@ class Thing(Node):
         self._key = key
         self._rest_url = rest_url
         self._rest_ca = rest_ca
+
+        # mqtt
+        self._host = host
+        self._port = port
+        self._reconnect = reconnect
+        
         self._certfile = certfile
         self._keyfile = keyfile
         self._cafile = cafile
+
+        if username=="":
+            self._username = key
+        else:
+            self._username = username
         self._password = password
 
+        # runtime
         self._messenger = None
         self._running = False
 
@@ -64,10 +76,11 @@ class Thing(Node):
             args = {
                     "host": self._host,
                     "port": self._port,
-                    "unpw": (self._key, self._password),
+                    "unpw": (self._username, self._password),
                     "cafile": self._cafile,
                     "certfile": self._certfile,
                     "keyfile": self._keyfile,
+                    "reconnect": self._reconnect,
             }
             self._messenger = self.MESSENGER_CLASS(self, **args)
         assert isinstance(self._messenger, Messenger), self._messenger
@@ -133,6 +146,7 @@ class Thing(Node):
 
     def load_remote_profile(self):
         "从主机获取节点配置"
+        assert self._rest_url!=""
         assert self.is_registered
 
         headers = {
@@ -220,7 +234,8 @@ class Thing(Node):
 
     def register(self, user, passwd):
         "register the thing to nodewox host"
-        assert self._password != None
+        assert self._password not in (None, "")
+        assert self._rest_url!=""
 
         # make thing meta
         info = self.as_data()
@@ -318,11 +333,8 @@ class Thing(Node):
         self._running = True
 
         while self._running:
-            # drive thing work
-            self.loop()
-
-            # drive messenger work
-            mess.loop()
+            self.loop() # drive thing work
+            mess.loop() # drive messenger work
 
 
     def stop(self):
