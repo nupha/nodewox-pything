@@ -12,17 +12,17 @@ class Channel(Node):
     # channel datatype decl.
     DATA_TYPE = ("", 0)
 
-    def __init__(self, thing, key, flow, name="", latch=False, seq=0, exclusive=True, comment="", **kwargs):
+    def __init__(self, thing, key, gender, name="", latch=False, seq=0, exclusive=True, comment="", **kwargs):
         from thing import Thing
         assert isinstance(thing, Thing), thing
         assert key!="" and "/" not in key, key
-        assert flow in ("I", "O"), flow
+        assert gender in ("F", "M"), gender
 
         assert self.DATA_TYPE[0] in ("int16", "int32", "int64", "byte", "float", "bool", "string", ""), self.DATA_TYPE
         assert self.DATA_TYPE[1]>=0, self.DATA_TYPE
 
         self._parent = thing
-        self._flow = flow
+        self._gender = gender
         self._latch = latch
         self._exclusive = exclusive
         self._seq = seq
@@ -52,7 +52,7 @@ class Channel(Node):
         assert self._parent!=None
         res = Node.as_data(self)
         res.update({
-                "flow": self._flow,
+                "gender": self._gender,
                 "latch": self._latch,
                 "lang": "",
                 "seq": self._seq,
@@ -63,7 +63,7 @@ class Channel(Node):
         else:
             res['datatype'] = self.DATA_TYPE
 
-        if self._flow=="I":
+        if self._gender=="F":
             res['exclusive'] = self._exclusive
         else:
             res['exclusive'] = False
@@ -71,7 +71,7 @@ class Channel(Node):
         return res
 
 
-class SourceChannel(Channel):
+class MaleChannel(Channel):
     DATA_TYPE = ("", 0)
     QSIZE = 20
 
@@ -183,7 +183,7 @@ class SourceChannel(Channel):
         self.send_data()
 
 
-class ActuatorChannel(Channel):
+class FemaleChannel(Channel):
     DATA_TYPE = ("", 0)
 
     def __init__(self, thing, key, **kwargs):
