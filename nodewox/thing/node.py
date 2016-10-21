@@ -227,15 +227,16 @@ class Node(object):
 
     @classmethod
     def encode_packet(cls, data, datatype, dim):
-        if datatype in (None, ""):
+        if datatype == "":
+            # string and bytearray converts to bytes
+            # other data converts to null
+            p = ""
             if data!=None and len(data)>0:
                 if isinstance(data, basestring):
                     data = bytearray(data)
-                else:
-                    assert isinstance(data, bytearray)
-                p = struct.pack("%dB" % len(data), *data)
-            else:
-                p = ""
+                    p = struct.pack("%dB" % len(data), *data)
+                elif isinstance(data, bytearray):
+                    p = struct.pack("%dB" % len(data), *data)
 
         else:
             assert isinstance(data, (list, tuple)), data
