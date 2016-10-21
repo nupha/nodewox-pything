@@ -198,7 +198,7 @@ class Thing(Node):
 
                 if k in self.children:
                     ch = self.children[k]
-                    assert ch._flow==chinfo['flow']
+                    assert ch._gender==chinfo['gender']
 
                     ch._id = chinfo['id']
                     assert type(ch._id)==types.IntType, ch._id
@@ -275,7 +275,7 @@ class Thing(Node):
         for ch in self.children.values():
             assert type(ch._id)==types.IntType and ch._id>0, (ch.key, ch._id)
             subs.append("/NX/%d/q" % ch._id)
-            if ch._flow=="I":
+            if ch._gender=="F":
                 subs.append("/NX/%d" % ch._id)
 
             # say hello from channel ch
@@ -297,7 +297,7 @@ class Thing(Node):
                 payload = bytearray(json.dumps(msg))
             else:
                 payload = ""
-            mess.publish(topic, payload)
+            mess.publish(topic, payload, qos=2)
 
 
     def on_connect_fail(self, code, userdata):

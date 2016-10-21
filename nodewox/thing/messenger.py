@@ -82,13 +82,14 @@ class Messenger(object):
             }
             res = target.handle_request(**args)
 
-        for topic, msg in res.items():
-            assert isinstance(msg, dict), msg
-            if len(msg)==0:
-                payload = ""
-            else:
-                payload = bytearray(json.dumps(msg))
-            client.publish(topic, payload)
+        if isinstance(res, dict):
+            for topic, msg in res.items():
+                assert isinstance(msg, dict), msg
+                if len(msg)==0:
+                    payload = ""
+                else:
+                    payload = bytearray(json.dumps(msg))
+                client.publish(topic, payload)
 
 
     def ack_msg_packet(self, client, userdata, msg):
@@ -155,7 +156,7 @@ class Messenger(object):
         return self._node._key
 
     def get_will(self):
-        return ("/NX/%d/r" % self._node.get_id(), '{"ack":"bye"}')
+        return ("/NX/%d/r" % self._node.get_id(), '{"ack":"bye"}', 2)
 
     def make_connection(self, conn):
         conn.reinitialise(client_id=self.get_client_id(), clean_session=True)
@@ -183,12 +184,17 @@ class Messenger(object):
 
             wt = will[0]
             wp = None
+            wq = 0
             if len(will)>1:
                 wp = will[1]
 
+            if len(will)>2:
+                wq = will[2]
+                assert wq in (0,1,2), wq
+
             if wt != "":
                 conn.will_clear()
-                conn.will_set(wt, payload=wp)
+                conn.will_set(wt, payload=wp, qos=wq)
 
         conn.message_callback_add("/NX/+/q", self.ack_msg_request)
         conn.message_callback_add("/NX/+", self.ack_msg_packet)

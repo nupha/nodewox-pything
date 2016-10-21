@@ -68,10 +68,10 @@ class Channel(Node):
 
 class MaleChannel(Channel):
     DATA_TYPE = ("", 0)
-    QSIZE = 20
+    QSIZE = 10
 
     def __init__(self, thing, key, **kwargs):
-        Channel.__init__(self, thing, key, "O", **kwargs)
+        Channel.__init__(self, thing, key, "M", **kwargs)
         self._dataq = Queue(self.QSIZE)
 
     def clear_data(self):
@@ -107,7 +107,7 @@ class FemaleChannel(Channel):
     DATA_TYPE = ("", 0)
 
     def __init__(self, thing, key, **kwargs):
-        Channel.__init__(self, thing, key, "I", **kwargs)
+        Channel.__init__(self, thing, key, "F", **kwargs)
 
     def handle_packet(self, packet, src=0):
         data = self.decode_packet(packet, self.DATA_TYPE[0], self.DATA_TYPE[1])

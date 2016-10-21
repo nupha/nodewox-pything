@@ -50,7 +50,9 @@ class Param(object):
         if self.flag in ("volatile", "persistent", "readonly"):
             if self.datatype==float and isinstance(val, int):
                 val = float(val)
-            elif self.datatype==bool and isinstance(val, int):
+            elif self.datatype==int and isinstance(val, (float,bool)):
+                val = int(val)
+            elif self.datatype==bool and isinstance(val, (int,float)):
                 val = val!=0
 
             if isinstance(val, self.datatype):

@@ -113,10 +113,6 @@ class Node(object):
         if self._comment!="":
             res['comment'] = self.comment
 
-        attrs = self.get_attrs()
-        if len(attrs)>0:
-            res['attrs'] = attrs
-
         if len(self._params)>0:
             res['params'] = dict((k,v.as_data()) for k,v in self._params.items())
 
@@ -129,9 +125,12 @@ class Node(object):
         report_params = (action=="status")
 
         # set params
-        if len(params)>0:
-            for k,v in params.items():
+        for k,v in params.items():
+            p = self._params.get(k)
+            if p!=None:
+                oval = p.value 
                 if self.set_param(k, v):
+                    self.on_param_changed(p, old_value=oval)
                     report_params = True
 
         # resport param status
@@ -158,6 +157,10 @@ class Node(object):
     def loop(self):
         pass
    
+
+    def on_param_changed(self, param, old_value):
+        pass
+
 
     @classmethod
     def decode_packet(cls, packet, datatype, dim):
