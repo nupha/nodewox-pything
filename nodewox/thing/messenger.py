@@ -5,10 +5,10 @@ import traceback
 import json
 import re
 
-PAT_REQ    = re.compile(r"^\/NX\/(\d+)\/q$")
-PAT_PACKET = re.compile(r"^\/NX\/(\d+)$")
-
 class Messenger(object):
+    PAT_REQ    = re.compile(r"^\/NX\/(\d+)\/q$")
+    PAT_RES    = re.compile(r"^\/NX\/(\d+)\/r$")
+    PAT_PACKET = re.compile(r"^\/NX\/(\d+)$")
 
     def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile="", reconnect=1000):
         from node import Node
@@ -40,10 +40,8 @@ class Messenger(object):
     def is_connected(self):
         return self._client!=None and self._connected
 
-
     def get_reconnect_interval(self):
         return 1000
-
 
     def _sched_next_connect(self):
         timeout = self.get_reconnect_interval()
@@ -55,7 +53,7 @@ class Messenger(object):
 
 
     def ack_msg_request(self, client, userdata, msg):
-        _id = int(PAT_REQ.findall(msg.topic)[0])
+        _id = int(self.PAT_REQ.findall(msg.topic)[0])
         if _id == self._node.get_id():
             target = self._node
         else:
@@ -93,7 +91,7 @@ class Messenger(object):
 
 
     def ack_msg_packet(self, client, userdata, msg):
-        _id = int(PAT_PACKET.findall(msg.topic)[0])
+        _id = int(self.PAT_PACKET.findall(msg.topic)[0])
         chs = [x for x in self._node.children.values() if x.get_id()==_id]
         if len(chs) > 0:
             chan = chs[0]
@@ -199,6 +197,7 @@ class Messenger(object):
         conn.message_callback_add("/NX/+/q", self.ack_msg_request)
         conn.message_callback_add("/NX/+", self.ack_msg_packet)
         return conn
+
 
     def connect(self):
         assert self._host!=""
