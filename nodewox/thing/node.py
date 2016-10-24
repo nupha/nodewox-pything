@@ -231,7 +231,7 @@ class Node(object):
             # string and bytearray converts to bytes
             # other data converts to null
             p = ""
-            if data!=None and len(data)>0:
+            if data is not None and len(data)>0:
                 if isinstance(data, basestring):
                     data = bytearray(data)
                     p = struct.pack("%dB" % len(data), *data)
