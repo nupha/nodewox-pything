@@ -217,9 +217,9 @@ class Node(object):
             n = dim - len(data)
             if datatype in ("byte", "int16", "int32", "int64", "float"):
                 data += [0] * n
-            elif data=="bool":
+            elif datatype=="bool":
                 data += [False] * n
-            elif data=="string":
+            elif datatype=="string":
                 data += [""] * n
 
         return data
