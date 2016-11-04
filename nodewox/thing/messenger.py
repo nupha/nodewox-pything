@@ -231,7 +231,7 @@ class Messenger(object):
                 traceback.print_exc()
                 self._sched_next_connect()
 
-        self._client.loop(1)
+        #self._client.loop(1)
         return self._client
 
 
@@ -241,5 +241,5 @@ class Messenger(object):
         else:
             # drive mqtt socket work
             if self._client:
-                self._client.loop(0.005)
+                self._client.loop(0.002)
 

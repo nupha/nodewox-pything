@@ -188,7 +188,7 @@ class Node(object):
                     data = struct.unpack("!%dq" % n, packet)
                 elif datatype=="float":
                     n = len(packet) / struct.calcsize("f")
-                    data = struct.unpack("!%df" % n, packet)
+                    data = struct.unpack("!%df" % n, bytearray(packet))
                 elif datatype=="bool":
                     n = len(packet) / struct.calcsize("B")
                     data = tuple(x!=0 for x in struct.unpack("!%dB" % n, packet))
