@@ -11,8 +11,8 @@ class Node(object):
     NAME = "" # default node name
 
     def __init__(self, key, name="", parent=None, comment="", **kwargs):
-        if key!=None:
-            assert key!="" and "/" not in key, key
+        assert isinstance(key, basestring), key
+        assert key!="" and "/" not in key, key
 
         if name=="":
             name = self.NAME
@@ -20,7 +20,6 @@ class Node(object):
         if parent!=None:
             assert isinstance(parent, Node), parent
 
-        # meta
         self._key = key
         self._name = name
         self._parent = parent
@@ -105,10 +104,7 @@ class Node(object):
 
     def as_data(self):
         assert isinstance(self._key, basestring) and self._key!=""
-        res = {"key":self._key, "seq":self._seq}
-
-        if self._name not in ("", self._key):
-            res['name'] = self._name
+        res = {"key":self._key, "name":self._name, "seq":self._seq}
 
         if self._comment!="":
             res['comment'] = self.comment

@@ -12,7 +12,6 @@ class Channel(Node):
     def __init__(self, thing, key, gender, name="", latch=False, seq=0, exclusive=True, comment="", **kwargs):
         from thing import Thing
         assert isinstance(thing, Thing), thing
-        assert key!="" and "/" not in key, key
         assert gender in ("F", "M"), gender
 
         assert self.DATA_TYPE[0] in ("int16", "int32", "int64", "byte", "float", "bool", "string", ""), self.DATA_TYPE
@@ -27,6 +26,7 @@ class Channel(Node):
 
         if name=="": name = self.NAME
         if name=="": name = key
+
         Node.__init__(self, key, parent=thing, name=name, comment=comment, **kwargs)
 
 

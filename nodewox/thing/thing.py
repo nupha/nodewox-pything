@@ -7,9 +7,9 @@ import json
 import types
 import os
 import re
-import pycurl
+import ssl
+import httplib
 import urlparse
-import StringIO
 
 PAT_REQ   = re.compile(r"^\/NX\/(\d+)\/q$")
 PAT_EVENT = re.compile(r"^\/NX\/(\d+)$")
@@ -106,43 +106,9 @@ class Thing(Node):
         return res
 
 
-    def _setup_curl(self, url, headers={}, debug=False):
-        c = pycurl.Curl()
-        b = StringIO.StringIO()
-
-        # fix curl resolve dns slow problem
-        c.setopt(pycurl.IPRESOLVE, pycurl.IPRESOLVE_V4)
-
-        c.setopt(pycurl.CONNECTTIMEOUT, 30)
-        c.setopt(pycurl.TIMEOUT, 60)
-        c.setopt(pycurl.USERAGENT, "nodewox/thing")
-
-        # headers
-        if len(headers)>0:
-            assert type(headers)==types.DictType, headers
-            c.setopt(pycurl.HTTPHEADER, ["%s: %s" % (k,v) for k,v in headers.items()])
-
-        c.setopt(pycurl.URL, url)
-        c.setopt(pycurl.WRITEFUNCTION, b.write)
-        c.setopt(pycurl.FOLLOWLOCATION, 1)
-        c.setopt(pycurl.MAXREDIRS, 3)
-
-        c.setopt(pycurl.SSL_VERIFYPEER, 2)
-        c.setopt(pycurl.SSL_VERIFYHOST, 2)
-
-        # setup ca
-        if os.path.isfile(self._rest_ca):
-            c.setopt(pycurl.CAINFO, self._rest_ca)
-        elif os.path.isdir(self._rest_ca):
-            c.setopt(pycurl.CAPATH, self._rest_ca)
-        else:
-            c.setopt(pycurl.CAINFO, "/var/lib/nodewox/trust/default.pem")
-
-        if debug:
-            c.setopt(pycurl.VERBOSE, 1)
-
-        return (c, b)
-
+    def _make_ssl_context(self):
+        sctx = ssl.create_default_context(cafile=self._rest_ca)
+        return sctx
 
     def load_remote_profile(self):
         "从主机获取节点配置"
@@ -153,15 +119,15 @@ class Thing(Node):
             "authorization": "CERT %s" % self._password,
             "x-requested-with": "XMLHttpRequest",
         }
-        c, b = self._setup_curl(os.path.join(self._rest_url, "thing/profile"), headers=headers)
+        sctx = self._make_ssl_context()
+        sctx.load_cert_chain(self._certfile, keyfile=self._keyfile)
+        u = urlparse.urlparse(os.path.join(self._rest_url, "thing/profile"))
+        conn = httplib.HTTPSConnection(u.netloc, context=sctx)
+        conn.request("GET", u.path, headers=headers)
 
-        # client cert
-        c.setopt(pycurl.SSLCERT, self._certfile)
-        c.setopt(pycurl.SSLKEY, self._keyfile)
-
-        c.perform()
-        status = c.getinfo(pycurl.HTTP_CODE)
-        content = b.getvalue()
+        res = conn.getresponse()
+        status = res.status
+        content = res.read()
 
         if status != 200:
             return status, content
@@ -246,14 +212,14 @@ class Thing(Node):
                 "x-requested-with": "XMLHttpRequest",
                 "content-type": "application/json",
         }
-        c, b = self._setup_curl(os.path.join(self._rest_url, "thing/register?trust=pem&cert=pem"), headers=headers)
 
-        c.setopt(pycurl.POST, 1)
-        c.setopt(pycurl.POSTFIELDS, U8(json.dumps(info)))
+        u = urlparse.urlparse(os.path.join(self._rest_url, "thing/register?trust=pem&cert=pem"))
+        conn = httplib.HTTPSConnection(u.netloc, context=self._make_ssl_context())
+        conn.request("POST", "%s?%s" % (u.path, u.query), body=U8(json.dumps(info)), headers=headers)
 
-        c.perform()
-        status = c.getinfo(pycurl.HTTP_CODE)
-        content = b.getvalue()
+        res = conn.getresponse()
+        status = res.status
+        content = res.read()
         return status, content
 
 
