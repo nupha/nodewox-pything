@@ -1,4 +1,5 @@
 #coding: utf-8
+from nodewox import NX_PREFIX
 from param import Param
 import types
 import collections
@@ -139,7 +140,7 @@ class Node(object):
             if len(params)>0:
                 res['params'] = params
 
-        pubs = {"/NX/%d/r" % self.get_id(): res}
+        pubs = {"{}{}/r".format(NX_PREFIX, self.get_id()): res}
         if len(children)>0:
             # request into children
             for c in self.children.values():

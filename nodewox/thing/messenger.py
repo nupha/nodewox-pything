@@ -1,4 +1,5 @@
 #coding: utf-8
+from nodewox import NX_PREFIX
 import paho.mqtt.client as mqtt
 import time
 import traceback
@@ -6,9 +7,9 @@ import json
 import re
 
 class Messenger(object):
-    PAT_REQ    = re.compile(r"^\/NX\/(\d+)\/q$")
-    PAT_RES    = re.compile(r"^\/NX\/(\d+)\/r$")
-    PAT_PACKET = re.compile(r"^\/NX\/(\d+)$")
+    PAT_REQ    = re.compile(r"^{}(\d+)\/q$".format(NX_PREFIX.replace("/", r"\/")))
+    PAT_RES    = re.compile(r"^{}(\d+)\/r$".format(NX_PREFIX.replace("/", r"\/")))
+    PAT_PACKET = re.compile(r"^{}(\d+)$".format(NX_PREFIX.replace("/", r"\/")))
 
     def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile="", reconnect=1000):
         from node import Node
@@ -154,7 +155,7 @@ class Messenger(object):
         return self._node._key
 
     def get_will(self):
-        return ("/NX/%d/r" % self._node.get_id(), '{"ack":"bye"}', 2)
+        return ("{}{}/r".format(NX_PREFIX, self._node.get_id()), '{"ack":"bye"}', 2)
 
     def make_connection(self, conn):
         conn.reinitialise(client_id=self.get_client_id(), clean_session=True)
@@ -194,8 +195,8 @@ class Messenger(object):
                 conn.will_clear()
                 conn.will_set(wt, payload=wp, qos=wq)
 
-        conn.message_callback_add("/NX/+/q", self.ack_msg_request)
-        conn.message_callback_add("/NX/+", self.ack_msg_packet)
+        conn.message_callback_add("{}+/q".format(NX_PREFIX), self.ack_msg_request)
+        conn.message_callback_add("{}+".format(NX_PREFIX), self.ack_msg_packet)
         return conn
 
 

@@ -1,5 +1,6 @@
 #coding: utf-8
 from node import Node
+from nodewox import NX_PREFIX
 from Queue import Queue
 import types
 import time
@@ -89,7 +90,7 @@ class MaleChannel(Channel):
         if self.get_id()>0:
             mess = self.parent.get_messenger()
             if mess.is_connected:
-                topic = "/NX/%d" % self.get_id()
+                topic = "{}{}".format(NX_PREFIX, self.get_id())
                 while not self._dataq.empty():
                     data, gid, src = self._dataq.get()
                     p = self.encode_packet(data, self.DATA_TYPE[0], self.DATA_TYPE[1])

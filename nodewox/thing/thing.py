@@ -1,4 +1,5 @@
 #coding: utf-8
+from nodewox import NX_PREFIX
 from node import Node, U8
 from messenger import Messenger
 from channel import Channel
@@ -11,8 +12,8 @@ import ssl
 import httplib
 import urlparse
 
-PAT_REQ   = re.compile(r"^\/NX\/(\d+)\/q$")
-PAT_EVENT = re.compile(r"^\/NX\/(\d+)$")
+PAT_REQ   = re.compile(r"^{}(\d+)\/q$".format(NX_PREFIX.replace("/", r"\/")))
+PAT_EVENT = re.compile(r"^{}(\d+)$".format(NX_PREFIX.replace("/", r"\/")))
 
 class Thing(Node):
     # thing prop decl.
@@ -237,12 +238,12 @@ class Thing(Node):
         res = {}
         mess = self.get_messenger()
 
-        subs = ["/NX/%d/q" % self._id]
+        subs = ["{}{}/q".format(NX_PREFIX, self._id)]
         for ch in self.children.values():
             assert type(ch._id)==types.IntType and ch._id>0, (ch.key, ch._id)
-            subs.append("/NX/%d/q" % ch._id)
+            subs.append("{}{}/q".format(NX_PREFIX, ch._id))
             if ch._gender=="F":
-                subs.append("/NX/%d" % ch._id)
+                subs.append("{}{}".format(NX_PREFIX, ch._id))
 
             # say hello from channel ch
             res2 = ch.handle_request(action="status")
