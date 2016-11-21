@@ -261,18 +261,15 @@ class Node:
                     ack_params = True
 
         # resport param status
-        res = {}
+        payload = b''
         if ack_params and len(self._params)>0:
             params = self.get_params_ack()
             if params:
-                res['params'] = params
-        if len(res)>0:
-            payload = json.dumps(res)
-        else:
-            payload = b''
+                payload = json.dumps({"params":params})
         self.publish("{}{}/r".format(NX_PREFIX, self._id), payload)
 
     def loop(self):
+        "user code for every loop tick"
         pass
 
 
@@ -416,9 +413,9 @@ class Thing(Node):
                 else:
                     try:
                         req = json.loads(msg)
-                        node.request(action=req.get("action"), \
-                                params=req.get("params"), \
-                                children=req.get("children",[]))
+                        node.request(action=req.get("action", b""), \
+                                params=req.get("params") or {}, \
+                                children=req.get("children") or [])
                     except:
                         pass
             elif op=="act":
@@ -426,7 +423,7 @@ class Thing(Node):
                 if data!=None:
                     node.perform(data)
 
-    def start(self, host="iot.nodewox.org", port=8883, username=None, secret=b"", keepalive=300, ssl=True):
+    def start(self, host="iot.nodewox.org", port=8883, username=None, password="", keepalive=300, ssl=True):
         assert self._id > 0
 
         if self._mqtt:
@@ -437,7 +434,7 @@ class Thing(Node):
 
         self._mqtt = MQTTClient(b"thing-%d" % self._id, \
                 host, port=port, \
-                user=username, password=secret, \
+                user=username, password=password, \
                 keepalive=keepalive, ssl=ssl)
 
         self._mqtt.set_callback(self._onmessage)
@@ -491,6 +488,7 @@ class Thing(Node):
             gc.collect()
 
 
+'''
 def register(thing, user, passwd):
     addr = socket.getaddrinfo("192.168.0.7", 6601)[0][-1]
     sock = socket.socket()
@@ -536,4 +534,4 @@ def register(thing, user, passwd):
         print(status, res['response'])
 
     gc.collect()
-
+'''

@@ -1,6 +1,6 @@
 #coding: utf-8
-from nodewox import NX_PREFIX
-import paho.mqtt.client as mqtt
+from nodewox.thing import NX_PREFIX
+from nodewox.mqtt.client import Client
 import time
 import traceback
 import json
@@ -11,7 +11,7 @@ class Messenger(object):
     PAT_RES    = re.compile(r"^{}(\d+)\/r$".format(NX_PREFIX.replace("/", r"\/")))
     PAT_PACKET = re.compile(r"^{}(\d+)$".format(NX_PREFIX.replace("/", r"\/")))
 
-    def __init__(self, master_node, host="", port=-1, unpw=None, certfile="", keyfile="", cafile="", reconnect=1000):
+    def __init__(self, master_node, host="", port=-1, unpw=None, certfile=None, keyfile=None, cafile=None, reconnect=1000):
         from node import Node
         assert isinstance(master_node, Node), master_node
 
@@ -124,8 +124,7 @@ class Messenger(object):
         self._node.on_message(msg, userdata)
 
     def _on_log(self, client, userdata, level, buf):
-        #print(level, buf)
-        pass
+        print(level, buf)
 
 
     def publish(self, topic, data="", qos=0):
@@ -171,9 +170,9 @@ class Messenger(object):
         if self._username!="":
             conn.username_pw_set(self._username, self._password)
 
-        if self._certfile!="":
+        if self._certfile not in (None, ""):
             conn.tls_set(self._cafile, certfile=self._certfile, keyfile=self._keyfile)
-            conn.tls_insecure_set(False)
+            conn.tls_insecure_set(True)
 
         will = self.get_will()
         if will != None:
@@ -211,7 +210,7 @@ class Messenger(object):
             self._reconnect_try += 1
 
             if self._client == None:
-                self._client = self.make_connection(mqtt.Client())
+                self._client = self.make_connection(Client())
                 reconn = False
             else:
                 reconn = True
@@ -232,7 +231,6 @@ class Messenger(object):
                 traceback.print_exc()
                 self._sched_next_connect()
 
-        #self._client.loop(1)
         return self._client
 
 

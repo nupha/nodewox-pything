@@ -1,5 +1,5 @@
 #coding: utf-8
-from nodewox import NX_PREFIX
+from nodewox.thing import NX_PREFIX
 from param import Param
 import types
 import collections
@@ -153,7 +153,6 @@ class Node(object):
 
     def loop(self):
         pass
-   
 
     def on_param_changed(self, param, old_value):
         pass

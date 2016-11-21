@@ -1,156 +1,66 @@
 #coding: utf-8
-from thing import Thing
-from node import U8
+from store import Storage, PackageLoader, Meta, Profile, Remote
 import sys
 import optparse
 import json
-import types
 import os
-import zipfile
 import getpass
 import uuid
-import traceback
 
-def _load_profile(filename):
-    path = [os.getcwd(), "/var/lib/nodewox/profiles/"]
-    data = None
+def _cmd_remote(argv):
+    p = optparse.OptionParser("%s [options] [remote]" % argv[0])
 
-    for p in path:
-        f = os.path.join(p, filename)
-        if os.path.isfile(f):
-            fh = open(f)
-            try:
-                data = U8(json.load(fh))
-            except:
-                pass
-            finally:
-                fh.close()
+    p.add_option('-i', '--rest-url', 
+            action="store", type="string", dest="rest_url", default="",
+            help="set base url to REST API for remote setting")
 
-            if data:
-                if data.get("key", "")=="":
-                    sys.stderr.write("invalid profile %s\n" % filename)
-                if data.get("rest_url", "")=="":
-                    sys.stderr.write("invalid profile %s\n" % filename)
-                break
+    p.add_option('-a', '--rest-ca', 
+            action="store", type="string", dest="rest_ca", default="",
+            help="set CAfile to trust REST for remote setting")
 
-    if data:
-        return f, data
-    else:
-        sys.stderr.write("can't find profile %s\n" % filename)
-        return None, None
-
-
-def _profile_clear_registry(profile):
-    filename, data = _load_profile(profile)
-    if data!=None:
-        path = os.path.dirname(filename)
-
-        for k in ("cafile", "certfile", "keyfile"):
-            if data.get(k, "")!="":
-                f = os.path.join(path, data[k])
-                if os.path.isfile(f):
-                    os.remove(f)
-                del data[k]
-
-        # save profile
-        os.umask(0o177)
-        fh = open(filename, "w")
-        json.dump(data, fh, ensure_ascii=False, indent=4)
-        fh.close()
-
-
-def _load_index(filename, default=None, show_err=True):
-    if os.path.exists(filename):
-        try:
-            fh = open(filename, "rb")
-            thindex = U8(json.load(fh))
-            fh.close()
-            if type(thindex)==types.DictType:
-                return thindex
-            elif show_err:
-                sys.stderr.write("invalid index data\n")
-        except:
-            if show_err:
-                sys.stderr.write("cannot read index\n")
-    else:
-        if show_err:
-            sys.stderr.write("index file not exists\n")
-
-    return default
-
-
-def _load_thing_class(index, show_err=True):
-    thindex = _load_index("/var/lib/nodewox/index.json", show_err=show_err)
-    if thindex==None:
-        if show_err:
-            sys.stderr.write("cannot read thing index")
-        return None
-
-    if index not in thindex:
-        if show_err:
-            sys.stderr.write("thing not installed: %s\n" % index)
-        return None
-
-    res = None
-    t = thindex[index]
-
-    sys.path.append(t['package'])
     try:
-        names = t['module'].split(".")
-        m = __import__(t['module'], fromlist=names[:-1])
-        res = getattr(m, t['class'])
-        assert type(res)==types.TypeType and issubclass(res, Thing)
-        return res
+        opts, args = p.parse_args(argv[1:])
     except:
-        if show_err:
-            traceback.print_exc(file=sys.stderr)
-            sys.stderr.write("fail to load class for thing %s\n" % t['package'])
-    finally:
-        sys.path.remove(t['package'])
+        p.print_help(sys.stdout)
+        return
 
+    conn = Storage().conn
 
-def _thing_instantiate(profile, show_err=True):
-    filename, data = _load_profile(profile)
-    if data==None:
-        sys.stderr.write("cannot load profile %s\n" % profile)
-        return None
+    if len(args)==0:
+        for x in Remote.list(conn):
+            if x['pri']==1:
+                pri = "*"
+            else:
+                pri = " "
+            sys.stdout.write("{} {}\t{}\t{}\n".format(pri, x['remote_id'], x['rest_url'], x['rest_ca']!=""))
+        return
+        
+    remote = Remote.find(conn, args[0])
+    if not remote:
+        remote = Remote(remote_id=args[0])
 
-    if "index" not in data:
-        sys.stderr.write("profile %s missing index field\n" % profile)
-        return None
+    if opts.rest_url!="":
+        remote['rest_url'] = opts.rest_url
 
-    cls = _load_thing_class(data['index'], show_err=show_err)
-    if cls!=None:
-        if getattr(cls, "PID", None)!=data.get("pid"):
-            if show_err:
-                sys.stderr.write("thing and profile don't match\n")
-                return
+    if opts.rest_ca=="none":
+        remote['rest_ca'] = ""
+    elif opts.rest_ca!="":
+        fh = open(opts.rest_ca)
+        t = fh.read()
+        fh.close()
+        remote['rest_ca'] = t
 
-        try:
-            args = {
-                    "rest_url": data['rest_url'],
-                    "rest_ca": data.get("rest_ca") or "",
-                    "certfile": data.get("certfile") or "",
-                    "keyfile": data.get("keyfile") or "",
-                    "cafile": data.get("cafile") or "",
-                    "password": data.get("password") or "",
-            }
+    if remote.get("rest_url", "")=="":
+        sys.stderr.write("invalid REST API url\n")
+        sys.exit(-1)
 
-            # fix fullpath
-            path = os.path.dirname(filename)
-            for k in ("cafile", "certfile", "keyfile", "rest_ca"):
-                if args[k]!="":
-                    args[k] = os.path.join(path, args[k])
-            return cls(data['key'], **args)
-
-        except:
-            if show_err:
-                traceback.print_exc(file=sys.stderr)
-                sys.stderr.write("\nfail to make instance for profile %s\n" % profile)
+    remote.save(conn)
+    conn.commit()
+    conn.close()
 
 
 def _cmd_install(argv):
-    p = optparse.OptionParser("%s [options] pkgfile" % argv[0])
+    p = optparse.OptionParser("%s [options] package-path" % argv[0])
 
     try:
         opts, args = p.parse_args(argv[1:])
@@ -159,167 +69,170 @@ def _cmd_install(argv):
         p.print_help(sys.stdout)
         return
 
-    thindex = _load_index("/var/lib/nodewox/index.json", default={}, show_err=False)
-
-    for pkg in args:
-        pkg = os.path.abspath(pkg)
-        if not zipfile.is_zipfile(pkg):
-            sys.stderr.write("'%s' is not a valid package\n" % pkg)
+    conn = Storage().conn
+    for path in args:
+        if not os.path.exists(path):
+            sys.stderr.write("path '{}' not exists\n".format(path))
             continue
 
-        z = zipfile.ZipFile(pkg)
-        mods = set()
-        for n in z.namelist():
-            if n.endswith("/__init__.py"):
-                mods.add(n[:-len("/__init__.py")])
-
-        sys.path.append(pkg)
-        for path in list(mods):
-            classes = []
-            names = path.split("/")
-
-            if len(names)>0:
-                m = __import__(".".join(names), fromlist=names[:-1])
-                for v in vars(m).values():
-                    if type(v)==types.TypeType and issubclass(v, Thing):
-                        if v.PID > 0:
-                            classes.append((str(v.PID), v))
-                        else:
-                            classes.append((".".join(names+[v.__name__]), v))
-
-            if len(classes) > 0:
-                for index, c in classes:
-                    sys.stdout.write("installed %s\n" % index)
-                    thindex[index] = {
-                            "package": pkg,
-                            "module": ".".join(names),
-                            "class": c.__name__,
-                            "name": c.NAME,
-                    }
-
-        sys.path.remove(pkg)
-        z.close()
-
-    fh = open("/var/lib/nodewox/index.json", "wb")
-    json.dump(thindex, fh, ensure_ascii=False, indent=4)
-    fh.close()
+        pkg = PackageLoader(path)
+        for index, (modname, cls) in pkg.classes.items():
+            meta = Meta(**{
+                "meta_id": index, 
+                "path": path, 
+                "module": modname, 
+                "class": cls.__name__,
+                "name": cls.NAME,
+                "pid": cls.PID
+            })
+            meta.save(conn)
+            sys.stdout.write("installed %s\n" % index)
+    conn.commit()
+    conn.close()
 
 
 def _cmd_list(argv):
-    thindex = _load_index("/var/lib/nodewox/index.json", default={}, show_err=False)
-    for k, v in sorted([(x,y) for x,y in thindex.items()]):
-        sys.stdout.write("%s\n" % k)
-
-
-def _cmd_profile(argv):
-    p = optparse.OptionParser(usage="%prog [options] <thing-index> <profile-name>")
-
-    p.add_option('-u', '--rest-url', 
-            action="store", type="string", dest="rest_url", default="https://www.nodewox.org/api",
-            help="url of nodewox REST-API, default to https://www.nodewox.org/api")
-
-    p.add_option('-a', '--rest-ca',
-            action="store", type="string", dest="rest_ca", default="",
-            help="trust ca file for http rest-api, leave blank to use default cacerts")
-
-    p.add_option('-k', '--key', 
-            action="store", type="string", dest="key", default="",
-            help="identity of thing, auto-generate if not specified")
-
-    p.add_option('-s', '--password', 
-            action="store", type="string", dest="password", default="",
-            help="thing password, auto-generate if not specified")
-    
-    p.add_option('-p', '--path',
-            action="store", type="string", dest="path", default="/var/lib/nodewox/profiles/",
-            help="profile store path, default to '/var/lib/nodewox/profiles/'")
-
-    p.add_option('-f', '--force',
-            action="store_true", dest="force", default=False,
-            help="override existing profile")
-
-    opts, args = p.parse_args(argv[1:])
-
-    if len(args)<2:
-        sys.stderr.write("both thing-name and profile-name is required\n")
-        sys.exit(-1)
-
-    index = args[0]
-    cls = _load_thing_class(index)
-    if cls==None:
-        sys.exit(-1)
-
-    if cls.PID > 0:
-        assert index==str(cls.PID)
-
-    profile = args[1]
-    for c in "*/?`()[]{}^&~;":
-        if c in profile:
-            sys.stderr.write("profile name contains invalid char %s\n" % c)
-            sys.exit(-1)
-
-    profile = os.path.join(opts.path, profile)
-    if not opts.force and os.path.isfile(profile):
-        sys.stderr.write("file %s already exists\n" % profile)
-        sys.exit(-1)
-
-    if not opts.rest_url.startswith("https://"):
-        sys.stderr.write("REST-API url must starts with https://\n")
-        sys.exit(-1)
-
-    if opts.rest_ca!="" and not os.path.isfile(opts.rest_ca):
-        sys.stderr.write("cannot find cafile %s\n" % opts.rest_ca)
-        sys.exit(-1)
-        
-    if not os.path.isdir(opts.path):
-        sys.stderr.write("invalid path %s\n" % opts.path)
-        sys.exit(-1)
-
-    if opts.key!="":
-        if "/" in opts.key:
-            print(sys.stderr, "char '/' is invalid for key")
-            sys.exit(-1)
-
-        if len(opts.key)<32:
-            print(sys.stderr, "key width too small (must be greater than 32)")
-            sys.exit(-1)
-    else:
-        opts.key = str(uuid.uuid1()).replace("-", "")
-
-    if opts.password=="":
-        opts.password = str(uuid.uuid1()).replace("-", "")
-
-    d = {"index":index, "key":opts.key, "password":opts.password, "rest_url":opts.rest_url}
-    if cls.PID > 0:
-        d['pid'] = cls.PID
-
-    if opts.rest_ca!="":
-        d['rest_ca'] = os.path.abspath(opts.rest_ca)
-
-    os.umask(0o177)
-    fh = open(profile, "w")
-    fh.write(json.dumps(d, ensure_ascii=False, indent=4))
-    fh.close()
-
-    sys.stdout.write("profile created %s\n" % profile)
+    conn = Storage().conn
+    for meta in Meta.list(conn):
+        sys.stdout.write("%s\n" % meta['meta_id'])
+        for p in Profile.list(conn, meta["meta_id"]):
+            sys.stdout.write("\t{}\t{}\n".format(p['name'], p['remote_id']))
+    conn.close()
 
 
 def _cmd_register(argv):
-    p = optparse.OptionParser("%s [options] <profile>" % argv[0])
-    p.add_option("-u", "--username", 
-            action="store", type="string", dest="username", default="",
-            help="your nodewox.org account name")
+    p = optparse.OptionParser("%s [options] thing" % argv[0])
 
-    p.add_option("-p", "--password", 
+    p.add_option('-r', '--remote', 
+            action="store", type="string", dest="remote", default="",
+            help="remote settings, default to the primary one")
+
+    p.add_option('-t', '--token', 
+            action="store", type="string", dest="token", default="",
+            help="identity token of thing, auto-generate one if not given")
+
+    p.add_option('-o', '--profile',
+            action="store", type="string", dest="profile", default="",
+            help="profile name that used to store register results")
+
+    p.add_option('-f', '--force',
+            action="store_true", dest="force", default=False,
+            help="force to override if profile name is existed")
+
+    p.add_option("-U", "--username", 
+            action="store", type="string", dest="username", default="",
+            help="username of your account")
+
+    p.add_option("-P", "--password", 
             action="store", type="string", dest="password", default="",
-            help="your nodewox.org account password, prompt will be shown if omitted")
+            help="password your account, prompt to ask if omitted")
 
     try:
         opts, args = p.parse_args(argv[1:])
-        assert len(args)==1
+        assert len(args)>0
     except:
         p.print_help(sys.stdout)
         sys.exit(-1)
+
+    conn = Storage().conn
+
+    # check thing
+    meta = Meta.find(conn, args[0])
+    if not meta:
+        if os.path.exists(args[0]):
+            pkg = PackageLoader(args[0])
+            if len(pkg.classes)>1:
+                sys.stderr.write("more than one thing found in {}\n".format(args[0]))
+                for k in pkg.classes:
+                    sys.stderr.write("    {}\n".format(k))
+                sys.stderr.write("don't known which one to register, abort.\n".format(args[0]))
+                sys.exit(-1)
+            elif len(pkg.classes)==0:
+                sys.stderr.write("no thing class found in {}, abort.\n".format(args[0]))
+                sys.exit(-1)
+            else:
+                meta = Meta.find(conn, pkg.classes.keys()[0])
+                if meta==None:
+                    sys.stdout.write("thing '{}' is not installed yet.\nlet's install it first ...".format(pkg.classes.keys()[0]))
+                    meta_id, (modname, cls) = pkg.classes.items()[0]
+                    meta = Meta(**{
+                        "meta_id": meta_id, 
+                        "path": pkg.path, 
+                        "module": modname, 
+                        "class": cls.__name__,
+                        "name": cls.NAME,
+                        "pid": cls.PID
+                    })
+                    meta.save(conn)
+                    sys.stdout.write(" done\n")
+
+    if not meta:
+        sys.stderr.write("unkown thing {}\n".format(args[0]))
+        sys.exit(-1)
+
+    meta_id = meta._id
+    cls = meta.get_class()
+    if cls==None:
+        sys.stderr.write("can't load thing {}\n".format(meta_id))
+        sys.exit(-1)
+
+    # check profile
+    profile = opts.profile
+    if profile == "":
+        profile_id = meta_id
+    else:
+        for c in "*/?`()[]{}^&~;.":
+            if c in opts.profile:
+                sys.stderr.write("profile name contains invalid char %s\n" % c)
+                sys.exit(-1)
+        profile_id = "{}/{}".format(meta_id, opts.profile)
+
+    prf = Profile.find(conn, profile_id)
+    if prf:
+        if not opts.force:
+            sys.stderr.write("profile %s already existed\n" % profile_id)
+            sys.exit(-1)
+
+        # use existing profile attrs
+        if prf['meta_id']!=meta_id:
+            sys.stderr.write(
+                    "thing name mismatch: '{}' vs '{}' in profile {}\n"
+                    .format(meta_id, prf['meta_id'], profile_id)
+            )
+            sys.exit(-1)
+
+        if opts.token=="":
+            opts.token = prf['token']
+        elif opts.token!=prf['token']:
+            sys.stderr.write("token mismatch\n")
+            sys.exit(-1)
+
+        if opts.remote=="":
+            opts.remote = prf['remote_id']
+        elif opts.remote!=prf['remote_id']:
+            sys.stderr.write("remote mismatch\n")
+            sys.exit(-1)
+
+    # check for remote
+    if opts.remote=="":
+        remote = Remote.primary(conn)
+        if not remote:
+            sys.stderr.write("no primary remote setting\n")
+            sys.exit(-1)
+    else:
+        remote = Remote.find(conn, opts.remote)
+        if not remote:
+            sys.stderr.write("unkown remote setting {}\n".format(opts.remote))
+            sys.exit(-1)
+
+    if opts.token!="":
+        if "/" in opts.token:
+            print(sys.stderr, "char '/' is invalid for token")
+            sys.exit(-1)
+    else:
+        opts.token = str(uuid.uuid1()).replace("-", "")
+
+    secret = str(uuid.uuid1()).replace("-", "")
 
     if opts.username=="":
         sys.stderr.write("username is required\n")
@@ -333,80 +246,59 @@ def _cmd_register(argv):
             sys.stdout.write("\n")
             sys.exit(-1)
 
-    profile = args[0]
-    thing = _thing_instantiate(profile)
+    # print register info
+    sys.stdout.write("registering:\n")
+    sys.stdout.write("    thing:   {}\n".format(meta_id))
+    sys.stdout.write("    remote:  {} ({})\n".format(remote._id, remote['rest_url']))
+    sys.stdout.write("    owner:   {}\n".format(opts.username))
+    sys.stdout.write("    profile: {}\n".format(profile_id))
 
-    if thing==None:
-        sys.exit(-1)
-
-    # do thing register
+    # make thing instance & register
+    thing = cls(opts.token, secret=secret)
+    thing.set_rest(remote['rest_url'], remote['rest_ca'])
     status, content = thing.register(opts.username, passwd)
-
     if status != 200:
-        sys.stderr.write("register fail (status=%d) %s" % (status, content))
+        sys.stderr.write("register fail ({}): {}\n".format(status, content))
         sys.exit(-1)
 
     ack = None
     try:
         d = json.loads(content)
     except:
-        sys.stderr.write("invalid response message %s" % content)
+        sys.stderr.write("invalid response message %s\n" % content)
         sys.exit(-1)
 
     if d.get('status') != 0:
         sys.stderr.write("ERROR(%d): %s\n" % (d['status'], d.get('response',"")))
         sys.exit(-1)
 
-    # update local profile
     ack = d['response']
-    filename, data = _load_profile(profile)
-    path = os.path.dirname(filename)
-    os.umask(0o177)
 
-    for k in ("cafile", "certfile", "keyfile"):
-        if k in data:
-            fname = os.path.join(path, data[k])
-            if os.path.isfile(fname):
-                del data[k]
-                os.remove(fname)
+    # save profile
+    pfile = Profile(profile_id=profile_id, meta_id=meta_id, name=opts.profile, token=opts.token, \
+            password=secret, remote_id=opts.remote, owner=opts.username)
 
     if "cert" in ack:
-        # save mqtt client cert
-        fname = "%s.pem" % os.path.basename(profile)
-        fh = open(os.path.join(path, fname), "w")
-        fh.write(ack['cert'])
-        fh.close()
-        data['certfile'] = fname
-        data['keyfile'] = fname
-
-    if "key" in ack:
-        # save mqtt client cert
-        fname = "%s.key.pem" % os.path.basename(profile)
-        fh = open(os.path.join(path, fname), "w")
-        fh.write(ack['key'])
-        fh.close()
-        data['keyfile'] = fname
+        pfile['iot_cert'] = ack['cert'][0]
+        pfile['iot_key'] = ack['cert'][1]
+    else:
+        pfile["iot_cert"] = ""
+        pfile["iot_key"] = ""
 
     if "trust" in ack:
-        # save mqtt ca
-        fname = os.path.join("/var/lib/nodewox/trust/", "%s.pem" % os.path.basename(profile))
-        fh = open(fname, "w")
-        fh.write(ack['trust'])
-        fh.close()
-        data['cafile'] = fname
+        pfile['iot_ca'] = ack['trust']
+    else:
+        pfile['iot_ca'] = ""
 
-        # c_rehash for new ca
-        # TODO...
+    pfile.save(conn)
+    conn.commit()
+    conn.close()
 
-    fh = open(filename, "w")
-    json.dump(data, fh, ensure_ascii=False, indent=4)
-    fh.close()
-
-    sys.stdout.write("registered\n")
+    sys.stdout.write("registered as '{}'\n".format(profile_id))
 
 
 def _cmd_start(argv):
-    p = optparse.OptionParser("%s [options] <thing-name> <profile-name>" % argv[0])
+    p = optparse.OptionParser("%s [options] <thing> <profile>" % argv[0])
 
     try:
         opts, args = p.parse_args(argv[1:])
@@ -415,13 +307,16 @@ def _cmd_start(argv):
         p.print_help(sys.stdout)
         sys.exit(-1)
 
-    profile = args[0]
-    thing = _thing_instantiate(profile)
-    if thing==None:
+    conn = Storage().conn
+
+    profile = Profile.find(conn, args[0])
+    if not profile:
+        sys.stderr.write("can't load profile {}\n".format(args[0]))
         sys.exit(-1)
 
-    if not thing.is_registered:
-        sys.stderr.write("thing is not registered\n")
+    thing = profile.make_thing(conn)
+    if thing==None:
+        sys.stderr.write("can't load make thing for {}\n".format(args[0]))
         sys.exit(-1)
 
     status, resp = thing.load_remote_profile()
@@ -443,7 +338,7 @@ def commands():
 
     if len(args)==0:
         p.print_help(sys.stderr)
-        sys.stderr.write("\nwhere cmd may be: install, list, profile, register, start\n")
+        sys.stderr.write("\nwhere cmd may be: install, list, remote, register, start\n")
         sys.exit(-1)
 
     cmd = args[0]
@@ -451,8 +346,8 @@ def commands():
         _cmd_install(args)
     elif cmd=="list":
         _cmd_list(args)
-    elif cmd=="profile":
-        _cmd_profile(args)
+    elif cmd=="remote":
+        _cmd_remote(args)
     elif cmd=="register":
         _cmd_register(args)
     elif cmd=="start":

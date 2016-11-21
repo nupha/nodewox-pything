@@ -1,5 +1,5 @@
 #coding: utf-8
-from nodewox import NX_PREFIX
+from nodewox.thing import NX_PREFIX
 from node import Node, U8
 from messenger import Messenger
 from channel import Channel
@@ -8,8 +8,7 @@ import json
 import types
 import os
 import re
-import ssl
-import httplib
+from M2Crypto import SSL, RSA, X509, m2, httpslib
 import urlparse
 
 PAT_REQ   = re.compile(r"^{}(\d+)\/q$".format(NX_PREFIX.replace("/", r"\/")))
@@ -24,41 +23,23 @@ class Thing(Node):
     # messenger class decl.
     MESSENGER_CLASS = Messenger
 
-    def __init__(self, key, rest_url="", rest_ca="", host="", port=-1, cafile="", certfile="", keyfile="", username="", password="", reconnect=1000):
+    def __init__(self, key, secret="", reconnect=1000):
         assert isinstance(key, basestring) and key!="" and "/" not in key, key
-        assert isinstance(rest_url, basestring), rest_url
         assert issubclass(self.MESSENGER_CLASS, Messenger), self.MESSENGER_CLASS
 
-        if rest_ca!="":
-            assert os.path.isfile(rest_ca), rest_ca
-
-        if certfile!="":
-            assert os.path.isfile(certfile), certfile
-
-        if keyfile!="":
-            assert os.path.isfile(keyfile), keyfile
-
-        if cafile!="":
-            assert os.path.isfile(cafile), cafile
-
         self._key = key
-        self._rest_url = rest_url
-        self._rest_ca = rest_ca
+        self._secret = secret
+        self._rest_url = ""
+        self._rest_ca = ""
 
-        # mqtt
-        self._host = host
-        self._port = port
         self._reconnect = reconnect
         
-        self._certfile = certfile
-        self._keyfile = keyfile
-        self._cafile = cafile
+        self._cafile = None
+        self._certfile = None
+        self._keyfile = None
 
-        if username=="":
-            self._username = key
-        else:
-            self._username = username
-        self._password = password
+        self._username = key
+        self._secret = secret
 
         # runtime
         self._messenger = None
@@ -71,13 +52,26 @@ class Thing(Node):
     def is_registered(self):
         return self._certfile!="" and self._rest_url!=""
 
+    def set_rest(self, url, ca=""):
+        self._rest_url = url
+        self._rest_ca = ca
+
+    def set_user_pw(self, username, password):
+        self._username = username
+        self._secret = password
+
+    def set_tls(self, cafile, certfile, keyfile):
+        self._cafile = cafile
+        self._certfile = certfile
+        self._keyfile = keyfile
+
     def get_messenger(self):
         if self._messenger==None:
             assert self._host!=""
             args = {
                     "host": self._host,
                     "port": self._port,
-                    "unpw": (self._username, self._password),
+                    "unpw": (self._username, self._secret),
                     "cafile": self._cafile,
                     "certfile": self._certfile,
                     "keyfile": self._keyfile,
@@ -108,8 +102,7 @@ class Thing(Node):
 
 
     def _make_ssl_context(self):
-        sctx = ssl.create_default_context(cafile=self._rest_ca)
-        return sctx
+        return SSL.Context()
 
     def load_remote_profile(self):
         "从主机获取节点配置"
@@ -117,13 +110,19 @@ class Thing(Node):
         assert self.is_registered
 
         headers = {
-            "authorization": "CERT %s" % self._password,
+            "authorization": "CERT %s" % self._secret,
             "x-requested-with": "XMLHttpRequest",
         }
+
         sctx = self._make_ssl_context()
-        sctx.load_cert_chain(self._certfile, keyfile=self._keyfile)
+        if self._certfile not in (None, ""):
+            cert = X509.load_cert_string(self._certfile)
+            key = RSA.load_key_string(self._keyfile)
+            m2.ssl_ctx_use_x509(sctx.ctx, cert.x509)
+            m2.ssl_ctx_use_rsa_privkey(sctx.ctx, key.rsa)
+
         u = urlparse.urlparse(os.path.join(self._rest_url, "thing/profile"))
-        conn = httplib.HTTPSConnection(u.netloc, context=sctx)
+        conn = httpslib.HTTPSConnection(u.netloc, ssl_context=sctx)
         conn.request("GET", u.path, headers=headers)
 
         res = conn.getresponse()
@@ -201,22 +200,21 @@ class Thing(Node):
 
     def register(self, user, passwd):
         "register the thing to nodewox host"
-        assert self._password not in (None, "")
+        assert self._secret not in (None, "")
         assert self._rest_url!=""
 
         # make thing meta
         info = self.as_data()
-        info['secret'] = self._password
+        info['secret'] = self._secret
 
         headers = {
                 "authorization": "USERPW %s\t%s" % (user, passwd),
                 "x-requested-with": "XMLHttpRequest",
                 "content-type": "application/json",
         }
-
         u = urlparse.urlparse(os.path.join(self._rest_url, "thing/register?trust=pem&cert=pem"))
-        conn = httplib.HTTPSConnection(u.netloc, context=self._make_ssl_context())
-        conn.request("POST", "%s?%s" % (u.path, u.query), body=U8(json.dumps(info)), headers=headers)
+        conn = httpslib.HTTPSConnection(u.netloc, ssl_context=self._make_ssl_context())
+        conn.request("POST", "{}?{}".format(u.path, u.query), body=U8(json.dumps(info)), headers=headers)
 
         res = conn.getresponse()
         status = res.status
@@ -264,7 +262,7 @@ class Thing(Node):
                 payload = bytearray(json.dumps(msg))
             else:
                 payload = ""
-            mess.publish(topic, payload, qos=2)
+            mess.publish(topic, payload, qos=0)
 
 
     def on_connect_fail(self, code, userdata):

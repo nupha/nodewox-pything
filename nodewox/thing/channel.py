@@ -1,6 +1,6 @@
 #coding: utf-8
+from nodewox.thing import NX_PREFIX
 from node import Node
-from nodewox import NX_PREFIX
 from Queue import Queue
 import types
 import time
