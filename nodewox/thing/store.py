@@ -268,6 +268,13 @@ class Profile(_TableORM):
     TABLE = "PROFILE"
     PKEY = "profile_id"
 
+    def show_info(self, file=sys.stdout):
+        file.write("profile : {}\n".format(self.data['profile_id']))
+        file.write("thing   : {}\n".format(self.data['meta_id']))
+        file.write("token   : {}\n".format(self.data['token']))
+        file.write("remote  : {}\n".format(self.data['remote_id']))
+        file.write("owner   : {}\n".format(self.data['owner']))
+
     def make_thing(self, conn):
         "make thing instance according to profile config"
         assert not self.is_empty

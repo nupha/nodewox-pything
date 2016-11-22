@@ -172,7 +172,7 @@ class Messenger(object):
 
         if self._certfile not in (None, ""):
             conn.tls_set(self._cafile, certfile=self._certfile, keyfile=self._keyfile)
-            conn.tls_insecure_set(True)
+            #conn.tls_insecure_set(False)
 
         will = self.get_will()
         if will != None:

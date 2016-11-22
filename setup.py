@@ -1,10 +1,11 @@
-from setuptools import setup, find_packages
+from setuptools import setup
 from setuptools.command.install import install
 import subprocess
 import os
 
 NODEWOX_HOME = "/var/lib/nodewox"
 
+'''
 class NXInstallCommand(install):
 
     def run(self):
@@ -25,22 +26,41 @@ class NXInstallCommand(install):
         ])
 
         install.run(self)
-
+'''
 
 setup(
 	name="nodewox-pything",
-	version="0.1",
-
-	packages=find_packages(),
-        cmdclass={'install': NXInstallCommand},
-
+	version="0.1.1",
 	author="johnray",
 	author_email="996351336@qq.com",
-	description="a python framework to write things that connect to nodewox.org",
+	description="nodewox sdk for things",
+        license="MIT",
+
+        packages=["nodewox", "nodewox.thing"],
+        #cmdclass={'install': NXInstallCommand},
+
+        #install_requires=[
+        #    "nodewox-mqtt>=1.2", 
+        #    "M2Crypto>=0.21.1", 
+        #    "pyopenssl>=0.15.1",
+        #],
 
         entry_points = """
         [console_scripts]
         nx_thing = nodewox.thing.cmd_thing:commands
         """,
+
+        classifiers=[
+            'Development Status :: 3 - Alpha',
+            'Intended Audience :: Developers',
+            'Intended Audience :: Education',
+            'Environment :: Console',
+            'License :: OSI Approved :: MIT License',
+            'Operating System :: POSIX',
+            'Programming Language :: Python',
+            'Programming Language :: Python :: 2.7',
+            'Topic :: Internet',
+            'Topic :: Education',
+        ]        
 )
 

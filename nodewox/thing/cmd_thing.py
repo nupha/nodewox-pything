@@ -249,6 +249,7 @@ def _cmd_register(argv):
     # print register info
     sys.stdout.write("registering:\n")
     sys.stdout.write("    thing:   {}\n".format(meta_id))
+    sys.stdout.write("    token:   {}\n".format(opts.token))
     sys.stdout.write("    remote:  {} ({})\n".format(remote._id, remote['rest_url']))
     sys.stdout.write("    owner:   {}\n".format(opts.username))
     sys.stdout.write("    profile: {}\n".format(profile_id))
@@ -294,7 +295,7 @@ def _cmd_register(argv):
     conn.commit()
     conn.close()
 
-    sys.stdout.write("registered as '{}'\n".format(profile_id))
+    sys.stdout.write("successfully registered as '{}'\n".format(profile_id))
 
 
 def _cmd_start(argv):
@@ -314,6 +315,7 @@ def _cmd_start(argv):
         sys.stderr.write("can't load profile {}\n".format(args[0]))
         sys.exit(-1)
 
+    profile.show_info(sys.stdout)
     thing = profile.make_thing(conn)
     if thing==None:
         sys.stderr.write("can't load make thing for {}\n".format(args[0]))
@@ -321,6 +323,7 @@ def _cmd_start(argv):
 
     status, resp = thing.load_remote_profile()
     if status == 0:
+        conn.close()
         thing.start()
     elif status == 404:
         sys.stderr.write("can't find register info on host, clear registry for '%s'\n" % profile)
